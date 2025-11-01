@@ -1,0 +1,62 @@
+output/
+build/
+main.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+*.log
+*.sqlite3
+*.db
+
+# Virtualenv
+venv/
+env/
+ENV/
+.venv/
+.env
+
+# IDE / Editors
+.vscode/
+.idea/
+*.iml
+
+# Django
+*.pot
+*.pyc
+*.pyo
+*.mo
+*.log
+
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest / Coverage
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+*.cover
+*.py,cover
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# PyCharm
+*.idea/
+
+# dotenv
+*.env
