@@ -1,753 +1,872 @@
-**Project Overview – FilmList**
+**Project Overview – FilmList**
 
 ---
 
-### 1. Project Title
-**FilmList – FastAPI‑Driven Personal Film Catalogue & Review Service**
+### 1. Project Title  
+**FilmList – A Clean‑Architecture REST API for Movies, Reviews & Wish‑Lists**
 
 ---
 
-### 2. Project Goal
-FilmList provides a robust backend for film‑enthusiasts to discover movies via The‑Movie‑Database (TMDB), store personal collections, write and manage reviews, and keep wish‑lists.  
-It solves the common pain‑points of disparate data sources by:
-
-* Centralising user authentication and session handling.  
-* Persistently caching film metadata locally to minimise external API calls.  
-* Offering a clean, typed API (FastAPI + Pydantic) that can be consumed by web, mobile or CLI clients.  
+### 2. Project Goal  
+FilmList provides a lightweight, standards‑compliant RESTful service that lets users browse a catalogue of films, write reviews, and maintain personal wish‑lists. The API protects all write operations with JWT‑based authentication, enriches film data from The‑Movie‑Database (TMDB), and stores everything in a relational database via SQLAlchemy. By adhering to a layered (clean) architecture, the codebase remains modular, testable, and easy to evolve as new features or data sources are added.
 
 ---
 
 ### 3. Core Logic & Principles  
 
-| Layer | Responsibility | Key Concepts |
-|-------|----------------|--------------|
-| **Entry Point** (`app/main.py`) | Instantiates a `FastAPI` app, configures CORS, creates DB tables, and mounts the versioned router (`/api/v1`). | *Single source of truth* – all request processing starts here. |
-| **API Layer** (`app/api/v1/*`) | Declares routers (`auth`, `film`, `review`, `wishlist`) and endpoint functions. Handles request validation, response modelling, and dependency injection (e.g., `verify_user`). | *FastAPI* automatically translates Pydantic schemas into OpenAPI docs. |
-| **Service Layer** (`app/services/*`) | Encapsulates business rules: authentication flow, TMDB interaction, review handling, wish‑list management. Each service delegates persistence to the repository layer and calls external APIs when required. | *Separation of concerns* – services are stateless, reusable, and unit‑testable. |
-| **Repository Layer** (`app/repositories/*` + `base_repository.py`) | Provides generic CRUD operations, eager‑loading helpers, and concrete repositories for each domain model. Uses a scoped SQLAlchemy session (`SessionLocal`) supplied via FastAPI dependencies. | *Repository pattern* – abstracts ORM details from services. |
-| **Database Layer** (`app/db/database.py`) | Sets up the SQLAlchemy engine, session factory, and declarative base (`Base`). Exposes `get_db` dependency for per‑request session handling. | *Unit of work* – each HTTP request gets its own DB transaction. |
-| **External API Wrapper** (`app/services/tmdb_side_api.py`) | Thin HTTP client (via `httpx`/`requests`) that calls TMDB *search* and *detail* endpoints, returning typed dictionaries. | *Fail‑fast* – any TMDB error is raised early, allowing the service to decide on fallback logic. |
-| **Utility Layer** (`app/util/hash.py`) | Secure password hashing (`bcrypt`/`passlib`) and verification helpers. | *Security* – passwords never stored in plain text. |
-| **Configuration** (`app/core/config.py`) | Loads environment variables into a `Settings` object (DB URL, TMDB API key, JWT secrets, etc.). | *Single configuration source* – accessed globally without circular imports. |
-| **Schemas** (`app/schemas/*.py`) | Pydantic models that define request and response contracts for every endpoint. | *Data validation* – guarantees inbound data integrity before it reaches the service layer. |
+| Layer | Primary Modules | Responsibilities |
+|-------|----------------|------------------|
+| **Entry** | `app/main.py` | Instantiates the FastAPI ASGI app, registers versioned routers, and triggers the startup lifecycle. |
+| **Router (API)** | `app/api/v1/endpoints/*.py` (`auth.py`, `film.py`, `review.py`, `wishlist.py`) | Translates HTTP requests into service calls, injects dependencies (`get_db`, `get_current_user`), and returns Pydantic‑validated responses. |
+| **Service** | `AuthService`, `FilmService`, `ReviewService`, `WishListService` | Encapsulates business rules, input validation, and orchestration (e.g., calling the TMDB side‑API to enrich a film before persisting). |
+| **Repository** | `BaseRepository`, `UserRepository`, `FilmRepository`, `ReviewRepository`, `WishListRepository` | Provides generic CRUD primitives using a scoped SQLAlchemy session; concrete repositories inherit from `BaseRepository`. |
+| **Model** | `app/models/*.py` (`User`, `Film`, `Review`, `WishList`) | Declarative ORM mapping of tables; defines relationships and column constraints. |
+| **Schema** | `app/schema/*.py` | Pydantic models that describe request bodies and response payloads, guaranteeing type safety across the stack. |
+| **Core** | `core/config.py` (`Settings`), `core/dependencies.py` (`get_db`, `get_current_user`) | Central configuration (DB URL, JWT secret, token TTL) and reusable FastAPI dependencies for DB sessions and authentication. |
+| **Database** | `db/database.py` (`engine`, `SessionLocal`, `Base`) | Creates the SQLAlchemy engine, session factory, and holds the metadata used by Alembic migrations. |
+| **Utility** | `util/hash.py` | Secure password hashing/verification (e.g., `bcrypt` via PassLib). |
+| **Side‑API** | `side_api/tmdb_api.py` | Thin wrapper around TMDB’s public REST endpoints; returns enriched film metadata (poster, overview, release date). |
+| **Migrations** | `alembic/versions/*.py` | Version‑controlled DDL scripts; `alembic upgrade`/`downgrade` evolve the schema without data loss. |
 
-#### Core Functional Flows  
+#### Architectural Principles  
 
-1. **Authentication**  
-   *A request hits an endpoint that depends on `verify_user`.*  
-   - `verify_user` extracts the session cookie, calls `AuthService.check_auth`.  
-   - `AuthService` queries `SessionRepository` → validates session status and returns `{status, user_id}`.  
-   - Protected endpoints receive the authenticated `user_id`.  
+1. **Layered / Clean Architecture** – Each layer depends only on the one directly below it. Routers never talk to the database; they call services, which in turn use repositories. This separation enables isolated unit‑tests for services (mocked repositories) and for repositories (real DB session).  
 
-2. **Film Retrieval / Caching**  
-   - `FilmService.get_info_about_film(film_id)` first looks up the film in the local `Film` table via `FilmRepository`.  
-   - If missing, the service calls `TMDBSideAPI.find_film_by_id`, persists the result (`FilmRepository.create`), and returns the freshly cached model.  
+2. **Dependency Injection** – FastAPI’s `Depends` mechanism supplies the current DB session (`get_db`) and the authenticated user (`get_current_user`) to any endpoint or service that needs them.  
 
-3. **Review Management**  
-   - `ReviewService.add_review` receives a validated `ReviewForAdd` schema and the `user_id`.  
-   - It ensures the associated film exists (using the film flow above), then creates a `FilmReview` row through `FilmReviewRepository`.  
+3. **Stateless JWT Authentication** – On login, `AuthService.authenticate` validates credentials, then creates a signed JWT (`create_access_token`). The token is sent in the `Authorization: Bearer <token>` header; the `get_current_user` dependency decodes it, fetches the corresponding `User` model, and injects the user into the request pipeline.  
 
-4. **Wish‑List Operations**  
-   - `WishListService.add_film_to_wish_list` guarantees a `WishList` record for the user (`auto_create_wish_list`) and a `Film` row (`auto_create_film`).  
-   - The film ID is merged into the list, deduplicated, and persisted via `WishListRepository.update_element_films`.  
+4. **Repository Pattern** – `BaseRepository` implements generic `add`, `get`, `list`, `update`, and `delete` methods. Domain‑specific repositories inherit from it, adding custom queries (e.g., `FilmRepository.search_by_title`). This centralises data‑access logic and keeps ORM usage confined to a single place.  
 
-All endpoints follow the same **request → dependency → service → repository → commit → response** pipeline, which yields a predictable, testable flow and isolates side‑effects to the repository layer.
+5. **External Data Enrichment** – `FilmService` can optionally call `tmdb_api.search` (or `detail`) to supplement a newly created film with rich metadata (poster URL, synopsis). The side‑API client is stateless and only used inside the service layer, keeping external calls isolated from core business logic.  
+
+6. **Schema‑Driven Contracts** – All inbound payloads are validated against Pydantic schemas before reaching the service layer, and all outbound responses are serialized from Pydantic models, guaranteeing a consistent JSON contract for API consumers.  
+
+7. **Database Migrations with Alembic** – The `Base` metadata is the source of truth for model definitions; Alembic scripts generate the incremental DDL required to keep the production database in sync with code changes.  
+
+#### Typical Request Flow (e.g., “List Films”)  
+
+```
+HTTP GET /api/v1/films
+   └─ Router → depends on get_current_user (JWT) & get_db
+        └─ FilmService.get_all()
+               └─ FilmRepository.get_all() → db.session.query(Film)
+        └─ (optional) TMDB enrichment → tmdb_api.search(...)
+   └─ Returns List[FilmRead] → FastAPI serialises to JSON
+```
+
+The same pattern applies to CRUD operations for reviews and wish‑lists, with the service layer enforcing ownership rules (e.g., only the creator may delete a review).
 
 ---
 
 ### 4. Key Features  
 
-- **User Management**  
-  - Register, login, logout, and session validation via secure cookies.  
-  - Password hashing with industry‑standard algorithms.  
-
-- **TMDB Integration**  
-  - Search movies by title, retrieve detailed information, and automatically cache results locally.  
-
-- **Film Catalogue**  
-  - CRUD‑style endpoints for films (read‑only from external source, write‑only for cached entries).  
-
-- **Review System**  
-  - Add, list, and delete reviews; each review is uniquely tied to a user‑film pair.  
-
-- **Personal Wish‑List**  
-  - Create a per‑user wish‑list, add or remove films, and auto‑populate missing film entries.  
-
-- **Layered Architecture**  
-  - Clear separation between API, service, repository, and DB layers, facilitating maintenance and unit testing.  
-
-- **Automatic Database Migrations**  
-  - Alembic scripts manage schema evolution, ensuring production‑grade DB versioning.  
-
-- **OpenAPI Documentation**  
-  - FastAPI generates interactive Swagger UI & ReDoc automatically from Pydantic schemas.  
-
-- **CORS & Security**  
-  - Configurable CORS middleware; session cookies are `HttpOnly` and `Secure` (when deployed over HTTPS).  
+- **JWT‑Protected Authentication** – Secure login, token issuance, and per‑request user resolution.  
+- **Film Catalogue** – Create, read, update, delete film records; optional TMDB enrichment for richer metadata.  
+- **User Reviews** – CRUD endpoints for textual reviews tied to both a user and a film.  
+- **Wish‑List Management** – Users can add/remove films to a personal wish‑list; retrieve the list with pagination.  
+- **Layered Architecture** – Clean separation of concerns (router ↔ service ↔ repository ↔ model).  
+- **Dependency Injection** – FastAPI `Depends` supplies DB sessions and authentication context automatically.  
+- **Database Migration Workflow** – Alembic scripts version the schema; easy upgrades/downgrades.  
+- **Typed Contracts** – Pydantic schemas guarantee request validation and response consistency.  
+- **Extensible Side‑API Integration** – Centralised TMDB client allows future external data sources without touching core logic.  
+- **Comprehensive Unit‑Testing Friendly** – Services can be tested with mock repositories; repositories can be tested against an in‑memory SQLite DB.  
 
 ---
 
 ### 5. Dependencies  
 
-| Category | Library / Tool | Purpose |
-|----------|----------------|---------|
-| **Web Framework** | `fastapi` | ASGI‑compatible API layer, automatic validation, OpenAPI generation. |
-| **Server** | `uvicorn[standard]` | Production ASGI server. |
-| **ORM** | `sqlalchemy` (>=1.4) | Declarative models, session management, migrations. |
-| **Migrations** | `alembic` | Database schema version control. |
-| **Pydantic** | `pydantic` (>=2.0) | Data validation & serialization. |
-| **Authentication & Hashing** | `passlib[bcrypt]` or `bcrypt` | Secure password hashing and verification. |
-| **HTTP Client** | `httpx` (or `requests`) | Communicate with TMDB external API. |
-| **Environment Management** | `python-dotenv` | Load `.env` files into `Settings`. |
-| **CORS Middleware** | `fastapi[all]` (includes `starlette`) | Enable cross‑origin requests. |
-| **Testing** *(optional but typical)* | `pytest`, `pytest-asyncio`, `httpx` (test client) | Unit and integration tests. |
-| **Database Driver** | `psycopg2-binary` (PostgreSQL) / `asyncpg` (if async) | Connect to the relational DB. |
-| **Logging** | `loguru` or standard `logging` | Structured application logs. |
+| Category | Packages | Purpose |
+|----------|----------|---------|
+| **Web Framework** | `fastapi`, `uvicorn` | ASGI server and routing layer. |
+| **ORM & DB** | `sqlalchemy>=2.0`, `alembic` | Declarative models, session handling, migrations. |
+| **Data Validation** | `pydantic` (bundled with FastAPI) | Request/response schema validation. |
+| **Authentication** | `python-jose[cryptography]` (or `pyjwt`), `passlib[bcrypt]` | JWT creation/verification, password hashing. |
+| **External API** | `httpx` or `requests` | HTTP client used by `side_api/tmdb_api.py`. |
+| **Configuration** | `pydantic-settings` (or `python-dotenv`) | Load environment variables into `Settings`. |
+| **Testing (optional)** | `pytest`, `pytest-asyncio`, `factory-boy` | Unit & integration test suite. |
+| **Utilities** | `typing-extensions` (for Python <3.10) | Advanced type hints if needed. |
+| **Database Driver** | `psycopg2-binary` (PostgreSQL) or `sqlite3` (development) | DB‑API driver for the chosen RDBMS. |
 
-*All dependencies are declared in `requirements.txt` / `pyproject.toml` and pinned to specific versions to guarantee reproducible builds.*
+*All dependencies are declared in `requirements.txt` / `pyproject.toml` and can be installed with `pip install -r requirements.txt`.*
 
 ---
 
-**FilmList** thus delivers a clean, maintainable, and extensible backend that can serve modern front‑ends while keeping external API usage efficient through local caching and a well‑structured service‑repository architecture.
+**In summary**, FilmList is a well‑structured FastAPI service that follows clean‑architecture best practices, offering authenticated CRUD operations for movies, reviews, and wish‑lists while leveraging external TMDB data and robust database migrations. The layered design, explicit dependency injection, and typed contracts make the codebase maintainable, testable, and ready for future expansion.
 
 ## Executive Navigation Tree
-- 📂 Alembic & Migrations
+
+- 📂 **Database Migrations**
   - [Alembic Env Config](#alembic-env-config)
-  - [Alembic Ini Constraints](#alembic-ini-constraints)
-  - [Alembic Ini Data Contract](#alembic-ini-data-contract)
-  - [Alembic Ini Interactions](#alembic-ini-interactions)
-  - [Alembic Ini Purpose](#alembic-ini-purpose)
-  - [Alembic Ini Usage Tips](#alembic-ini-usage-tips)
-  - [Add Film Review Migration](#add-film-review-migration)
-  - [Change Session Relations Migration](#change-session-relations-migration)
-  - [Migration 3ba776aed6c5 Drop Legacy Tables](#migration-3ba776aed6c5-drop-legacy-tables)
-  - [Migration 640dd27b82b8](#migration-640dd27b82b8)
-  - [Migration 94dcbdb61b10](#migration-94dcbdb61b10)
-  - [Migration Change Session Relations](#migration-change-session-relations)
-  - [Migration Responsibility](#migration-responsibility)
-  - [Films Session Drop Migration f63a5988397e](#films-session-drop-migration-f63a5988397e)
-- ⚙️ Logic & Responsibility
-  - [Downgrade Logic](#downgrade-logic)
-  - [Upgrade Logic](#upgrade-logic)
-  - [Component Responsibility](#component-responsibility)
-- 📄 Data Contracts
-  - [Data Contract](#data-contract)
-  - [Data Contract 640dd27b82b8](#data-contract-640dd27b82b8)
-- 🔄 Logic Flow
-  - [Logic Flow 640dd27b82b8](#logic-flow-640dd27b82b8)
-- 👁️ Visible Interactions
-  - [Visible Interactions](#visible-interactions)
-  - [Visible Interactions 640dd27b82b8](#visible-interactions-640dd27b82b8)
-- 🌐 API Endpoints
+  - [Alembic Engine Initialization](#alembic-engine-initialization)
+  - [Alembic Config Role](#alembic-config-role)
+  - [Alembic Visible Interactions](#alembic-visible-interactions)
+  - [Alembic Logic Flow](#alembic-logic-flow)
+  - [Alembic Data Contract](#alembic-data-contract)
+  - [Migration 2fdbf025e50c](#migration-2fdbf025e50c)
+  - [Migration 3253066141e8](#migration-3253066141e8)
+  - [Migration 3ba776aed6c5](#migration-3ba776aed6c5)
+  - [Upgrade Drop Schema](#upgrade-drop-schema)
+  - [Downgrade Rebuild Schema](#downgrade-rebuild-schema)
+  - [Downgrade Schema Recreation](#downgrade-schema-recreation)
+  - [Migration Upgrade](#migration-upgrade)
+  - [Migration Downgrade](#migration-downgrade)
+  - [Migration B8613fd000d0 Upgrade](#migration-b8613fd000d0-upgrade)
+  - [Migration B8613fd000d0 Downgrade](#migration-b8613fd000d0-downgrade)
+  - [Migration C6fa346e2960 Upgrade](#migration-c6fa346e2960-upgrade)
+  - [Migration C6fa346e2960 Downgrade](#migration-c6fa346e2960-downgrade)
+  - [Migration F63a5988397e Upgrade](#migration-f63a5988397e-upgrade)
+  - [Migration F63a5988397e Downgrade](#migration-f63a5988397e-downgrade)
+  - [DB URL Config](#db-url-config)
+
+- ⚙️ **API Endpoints**
   - [Auth Endpoints](#auth-endpoints)
   - [Film Endpoints](#film-endpoints)
-  - [Add Review](#add-review)
-  - [Delete Review](#delete-review)
-  - [List My Reviews](#list-my-reviews)
-  - [List Reviews](#list-reviews)
-- 🗂️ Models
-  - [Film Model](#film-model)
-  - [FilmReview Model](#filmreview-model)
-  - [User Model](#user-model)
-- 🗄️ Repositories
-  - [Base Repository](#base-repository)
-  - [Concrete Repositories](#concrete-repositories)
-  - [Wishlist Repository Update Element Films](#wishlist-repository-update-element-films)
-  - [WishlistRepository Update Element Films](#wishlistrepository-update-element-films)
-- 🔐 Security
-  - [Password Hashing](#password-hashing)
-  - [Random Hash Generation](#random-hash-generation)
+  - [Review Endpoints](#review-endpoints)
+  - [Router Aggregation](#router-aggregation)
+
+- 📄 **Data Models**
+  - [Model Film](#model-film)
+  - [Model Wishlist](#model-wishlist)
+  - [Model Filmsreview](#model-filmsreview)
+  - [Model User](#model-user)
+
+- 📂 **Repositories**
+  - [Repository Base](#repository-base)
+  - [Repository Film](#repository-film)
+  - [Repository Review](#repository-review)
+  - [Repository User](#repository-user)
+  - [Repository Wishlist Update](#repository-wishlist-update)
+
+- 🛠️ **Services**
+  - [Review Service](#review-service)
+  - [Wishlist Service](#wishlist-service)
+
+- 🌐 **External Integrations**
+  - [TMDB API](#tmdb-api)
+
+- 🔧 **Utilities**
+  - [Hash Util](#hash-util)
 
  
 
 <a name="alembic-env-config"></a>
-## Alembic Environment Configuration  
+## Alembic Env Configuration & Execution Flow
+
+**Purpose** – Sets up Alembic’s migration context for the **FilmList** project, wiring the SQLAlchemy `Base` metadata and the runtime DB URL from `core.config.settings`.
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `config` | `alembic.context.Config` | Holds Alembic configuration (including `alembic.ini`). | Re‑assigned after import to expose `settings`. |
+| `target_metadata` | `MetaData` | Source of schema definitions for autogeneration. | Obtained from `db.database.Base.metadata`. |
+| `settings` | `core.config.Settings` | Provides `DB_URL` (the live database connection string). | Injected into Alembic config via `set_main_option`. |
+| `engine_from_config` | function | Creates SQLAlchemy engine from the merged config. | Uses `pool.NullPool` to avoid connection pooling in migrations. |
+| `run_migrations_offline` / `run_migrations_online` | functions | Execute migrations in offline or online mode respectively. | Offline emits SQL scripts; online runs against a live DB. |
+
+**Logic Flow**
+
+1. Import `Base` from `db.database` and expose its `metadata` as `target_metadata`.  
+2. Load `settings` and overwrite Alembic’s `sqlalchemy.url` with `settings.DB_URL`.  
+3. Define `run_migrations_offline()` – configures context with URL only, enabling script generation.  
+4. Define `run_migrations_online()` – builds an engine via `engine_from_config`, connects, and passes the live connection to `context.configure`.  
+5. At module load, evaluate `context.is_offline_mode()` to dispatch to the appropriate runner.  
+
+> **⚠️ Critical Assumption** – The file assumes `core.config.settings` is importable at import time; any import‑time failure aborts migration execution.
+
+**Side‑Effects**
+
+- Prints `Base.metadata.tables.keys()` (debug output).  
+- May invoke `context.run_migrations()` which executes the migration scripts defined in each revision file.  
+
+**Dependencies**
+
+- `db.database.Base` (ORM model registry).  
+- `core.config.settings` (environment‑specific DB URL).  
+
+This fragment is the bridge between Alembic’s generic tooling and the **FilmList** project’s concrete database configuration. 
+<a name="alembic-engine-initialization"></a>
+## Alembic Engine Initialization & Mode Dispatch  
 
 **Component Responsibility**  
-Initialises Alembic’s migration environment for **FilmList** by loading the ORM metadata (`Base.metadata`), injecting the runtime DB URL from `settings.DB_URL`, and wiring the appropriate migration runner (offline vs. online).
+Bridges Alembic’s generic migration runner with the *FilmList* concrete database configuration. It creates a live SQLAlchemy engine from the project’s `core.config.settings`, binds it to the Alembic migration context, and selects the execution path (offline vs. online) at import time.
 
 **Visible Interactions**  
-- `from db.database import Base` → accesses **all** model tables.  
-- `from core.config import settings` → fetches the **DB_URL** defined in the project config.  
-- `alembic.context.config` → the Alembic configuration object, mutated to set `sqlalchemy.url`.  
-- `engine_from_config` & `pool.NullPool` → creates a temporary engine for online migrations.  
+- Imports `settings` from `core.config` (provides `SQLALCHEMY_DATABASE_URL`).  
+- Imports `Base` from `db.database` to expose ORM table metadata.  
+- Calls `engine_from_config` (Alembic helper) with the URL from `settings`.  
+- Executes `context.configure(connection=engine.connect(), target_metadata=Base.metadata, ...)`.  
+- Evaluates `context.is_offline_mode()`; if *True* → runs `run_offline()`, else → runs `run_online()`.  
+- Emits a debug `print(Base.metadata.tables.keys())` before configuration.
 
 **Technical Logic Flow**  
-1. Load logging config (if present).  
-2. Import `Base` → expose `target_metadata`.  
-3. Print table keys (debug aid).  
-4. Import `settings` → read `DB_URL`.  
-5. Override Alembic config: `config.set_main_option("sqlalchemy.url", settings.DB_URL)`.  
-6. Define `run_migrations_offline()` – configures context with URL only, enables literal binds.  
-7. Define `run_migrations_online()` – builds engine from config, binds connection to context.  
-8. Branch on `context.is_offline_mode()` to invoke the appropriate runner.  
+
+1. **Import time** – module loads, pulling `settings` and `Base`.  
+2. **Engine creation** – `engine = engine_from_config(config.get_section(config.config_ini_section), prefix='sqlalchemy.')`.  
+3. **Debug output** – `print(Base.metadata.tables.keys())`.  
+4. **Context configuration** – `context.configure(connection=engine.connect(), target_metadata=Base.metadata, ...)`.  
+5. **Mode dispatch** – `if context.is_offline_mode(): run_offline(); else: run_online()`.  
+6. **Migration execution** – the selected runner invokes `context.run_migrations()` which processes all revision scripts.
+
+**Data Contract**  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `settings` | `core.config.Settings` | Source of DB URL (`SQLALCHEMY_DATABASE_URL`) | Import‑time availability required; failure aborts migration run. |
+| `Base` | `declarative_base()` | Container of ORM table definitions | Used for `target_metadata` to enable autogeneration. |
+| `engine` | `sqlalchemy.Engine` | Live DB connection factory | Built via `engine_from_config`. |
+| `connection` | `Engine.connect()` | Active DB connection passed to Alembic | Scoped for the migration run. |
+| `context` | Alembic `MigrationContext` | Orchestrates migration execution | Determines offline/online mode, runs migrations. |
+| `run_offline()` / `run_online()` | Callable | Execute migration scripts in respective mode | Both ultimately call `context.run_migrations()`. |
+
+> **⚠️ Critical Assumption** – The fragment assumes `core.config.settings` can be imported without side‑effects; any import‑time error halts the entire migration process. 
+<a name="alembic-config-role"></a>
+## Alembic Configuration File – Role & Scope  
+
+The **`alembic.ini`** file defines static settings for Alembic’s migration engine. It is read exclusively by the project‑maintained `env.py` script and by the Alembic CLI (`alembic upgrade`, `alembic revision`, …). Its purpose is to locate migration scripts, configure the database URL, and set logging and post‑write hook behavior for generated revision files. 
+<a name="alembic-visible-interactions"></a>
+## Interaction Surface with Project Layers  
+
+- **`core/db/database.py`** supplies the actual SQLAlchemy engine; Alembic reads `sqlalchemy.url` only when `env.py` builds its own engine.  
+- **CLI Commands** (`alembic upgrade`, `alembic revision`) invoke the Alembic API, which parses this INI to resolve `script_location`, `version_locations`, and `prepend_sys_path`.  
+- **`alembic/env.py`** accesses the `[alembic]` and `[loggers]` sections to configure the migration context and logging output. 
+<a name="alembic-logic-flow"></a>
+## Configuration Flow  
+
+1. Alembic loads `alembic.ini` via `ConfigParser`.  
+2. `[alembic]` keys are stored in the `Config` object.  
+3. `env.py` calls `config.get_main_option("sqlalchemy.url")` to obtain the DB URL (`sqlite:///test.db`).  
+4. Migration script location is resolved from `script_location = %(here)s/alembic`.  
+5. Optional hooks (e.g., Black, Ruff) are read from `[post_write_hooks]` but remain disabled by default.  
+6. Logging configuration under `[loggers]`, `[handlers]`, `[formatters]` is applied to the Alembic logger hierarchy. 
+<a name="alembic-data-contract"></a>
+## Data Contract – Configuration Keys  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `script_location` | str | Path to migration scripts | Relative to the ini file (`%(here)s/alembic`). |
+| `prepend_sys_path` | str | Sys.path augmentation | Defaults to `.` (project root). |
+| `sqlalchemy.url` | str | Database connection URL | Currently `sqlite:///test.db`; can be overridden by env vars in `env.py`. |
+| `path_separator` | str | List delimiter for multi‑path options | Set to `os` (uses `os.pathsep`). |
+| `timezone` | str (optional) | Timezone for timestamp rendering | Blank → local time. |
+| `file_template` | str (optional) | Revision filename pattern | Commented out; defaults to `%(rev)s_%(slug)s`. |
+| `revision_environment` | bool | Force env execution on `revision` command | Default `false`. |
+| `post_write_hooks.*` | str | Hook definitions for formatting/linting generated scripts | All entries commented out. |
+| Logging sections (`[loggers]`, `[handlers]`, `[formatters]`) | dict | Configure Alembic’s log output | Levels: `WARNING` (root), `INFO` (alembic). |
+
+> **Critical:** The file contains **no executable code**; any change to keys directly influences migration behavior. Ensure consistency between this INI and `core/config.Settings` if the DB URL is altered elsewhere. 
+<a name="migration-2fdbf025e50c"></a>
+## Migration **2fdbf025e50c** – `добавил_таблицу_users1` (Stub)
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `revision` | `str` | Identifier used by Alembic | `'2fdbf025e50c'` |
+| `down_revision` | `str` | Parent migration | `'1f52a288fbdd'` |
+| `upgrade()` | `Callable[[], None]` | Apply forward changes | Currently `pass` – no schema alteration |
+| `downgrade()` | `Callable[[], None]` | Revert changes | Currently `pass` – no schema alteration |
+
+**Responsibility** – Placeholder migration; reserves a revision slot for a future *users1* table creation.  
+**Interactions** – Imported by Alembic’s environment script; `op` and `sa` are loaded but not invoked.  
+**Logic Flow** – Alembic calls `upgrade()` during `alembic upgrade head`; function returns immediately. 
+<a name="migration-3253066141e8"></a>
+## Migration **3253066141e8** – `change_password` (Stub)
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `revision` | `str` | Alembic identifier | `'3253066141e8'` |
+| `down_revision` | `str` | Parent migration | `'a1a82c21698d'` |
+| `upgrade()` | `Callable[[], None]` | Intended password‑field changes | `pass` – no operation |
+| `downgrade()` | `Callable[[], None]` | Intended rollback | `pass` – no operation |
+
+**Responsibility** – Reserved for future password column modifications.  
+**Visible Interactions** – No DB commands executed; only module import side‑effects (none).  
+**Logic Flow** – Alembic invokes `upgrade()`/`downgrade()`; immediate return. 
+<a name="migration-3ba776aed6c5"></a>
+## Migration **3ba776aed6c5** – `change_filmbase` (Schema Reset)
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `revision` | `str` | Alembic identifier | `'3ba776aed6c5'` |
+| `down_revision` | `str` | Parent migration | `'640dd27b82b8'` |
+| `upgrade()` | `Callable[[], None]` | Drop legacy tables & indexes | Calls `op.drop_index` / `op.drop_table` for `users`, `films_base`, `films`, `films_reviews`, `session` |
+| `downgrade()` | `Callable[[], None]` | Re‑create dropped schema | Uses `op.create_table` & `op.create_index` to restore all tables and indexes |
+
+**Responsibility** – Clears the previous film‑related schema, preparing a clean slate.  
+**Visible Interactions** – Directly manipulates the DB via Alembic’s `op` API; no external services.  
+**Logic Flow** –  
+1. `upgrade()` iterates through drop commands, removing indexes then tables.  
+2. `downgrade()` executes creation commands in reverse order, rebuilding columns, constraints, and indexes.  
+
+> **⚠️ Critical Assumption** – The fragment assumes `core.config.settings` can be imported without side‑effects; any import‑time error halts the entire migration process. 
+<a name="upgrade-drop-schema"></a>
+## Upgrade — Schema Tear‑Down  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `films` | Table | Stores film records | Dropped via `op.drop_table('films')` |
+| `wish_list_films` | Table | Junction for wish‑list ↔ film | Dropped after `films` |
+| `users` | Table | Application users | Dropped after dependent tables |
+| `films_reviews` | Table | Review ↔ film linkage | Dropped after `reviews` |
+| `wish_list` | Table | User‑specific wish‑list | Dropped after `users` |
+| `session` | Table | JWT session cache | Dropped last |
+| `ix_films_id`, `ix_users_id`, `ix_users_username`, `ix_films_reviews_review_id`, `ix_session_id` | Index | Speed up look‑ups | All removed with `op.drop_index` |
+
+> **⚠️ Critical Assumption** – The fragment assumes `core.config.settings` can be imported without side‑effects; any import‑time error halts the entire migration process.
+
+**Logic Flow (upgrade)**  
+1. Remove index `ix_films_id` on `films.id`.  
+2. Drop tables in dependency order: `films` → `wish_list_films` → `users` (after its indexes) → `films_reviews` → `wish_list` → `session`.  
+3. Each `op.drop_*` call is executed sequentially; failures abort further steps. 
+<a name="downgrade-rebuild-schema"></a>
+## Downgrade — Re‑creation of Columns, Constraints & Indexes  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `session` | Table | Holds session id & `user_id` FK | PK `id`; FK → `users.id` |
+| `wish_list` | Table | One‑to‑one list per user | PK `user_id`; FK → `users.id` |
+| `films_reviews` | Table | Review data linking users & films | PK `review_id`; FKs → `films.id`, `users.id` |
+| `users` | Table | Auth data | Columns `id`, `username`, `_password`; PK `id` |
+| `wish_list_films` | Table | Many‑to‑many wish‑list ↔ film | Composite PK (`wish_list_id`, `film_id`); FKs → `wish_list.user_id`, `films.id` |
+| `films` | Table | Core film catalogue | Columns `id`, `title`, `image`; PK `id` |
+| Indexes (`ix_session_id`, `ix_users_username`, `ix_users_id`, `ix_films_reviews_review_id`, `ix_films_id`) | Index | Restore query performance | Created after their tables |
+
+**Logic Flow (downgrade)**  
+1. Re‑create `session` table, then its index `ix_session_id`.  
+2. Build `wish_list` (FK to `users`).  
+3. Construct `films_reviews` with columns, primary key, and foreign keys; add index on `review_id`.  
+4. Create `users` table, then unique index on `username` (`unique=1`) and non‑unique on `id`.  
+5. Define `wish_list_films` junction table with composite primary key and foreign keys.  
+6. Build `films` table and finally its index on `id`.  
+
+All operations mirror the original schema, ensuring a clean rollback to the pre‑upgrade state. 
+<a name="downgrade-schema-recreation"></a>
+## Downgrade Schema Recreation
+
+**Responsibility**  
+Re‑establish the original database layout that the *upgrade* removed. It rebuilds the `users`, `session`, `films_reviews`, `films_base`, and `films` tables, then restores their indexes and constraints so a full rollback returns the schema to its pre‑upgrade state.
+
+**Visible Interactions**  
+- Calls **Alembic operations** (`op.create_table`, `op.create_index`) which emit DDL against the active DB engine.  
+- Relies on **SQLAlchemy column objects** for type definitions; no external services are invoked.
+
+**Logic Flow**  
+1. `op.create_table('users', …)` → defines `id`, `username`, `_password`; adds PK on `id`.  
+2. `op.create_index('ix_users_username', 'users', ['username'], unique=1)` → unique index on `username`.  
+3. `op.create_index('ix_users_id', 'users', ['id'], unique=False)` → non‑unique index on `id`.  
+4. Recreates `session` with FK to `users.id` and its index.  
+5. Builds `films_reviews` with FK to `films_base.id` and `users.id`; PK on `review_id`; adds index on `review_id`.  
+6. Constructs `films_base` (single PK `id`) and its index.  
+7. Creates `films` with columns `model_id` (PK), `id`, `user_id`, `title`, `image`; FK `user_id → users.id`.  
+8. Adds index `ix_films_model_id` on `films.model_id`.
 
 **Data Contract**
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `config` | `alembic.context.Config` | Source of Alembic settings | Mutated to set `sqlalchemy.url`. |
-| `settings.DB_URL` | `str` | Database connection string | Supplied by **FilmList** core config. |
-| `Base.metadata` | `sqlalchemy.MetaData` | Table collection for autogeneration | Includes every model imported in `app.db.database`. |
-| `engine_from_config` | Callable | Creates SQLAlchemy engine from `alembic.ini` values | Uses `pool.NullPool` to avoid connection pooling. |
-| `connection` | DBAPI connection | Live DB link for migration scripts | Scoped within `with connectable.connect()`. |
+| `users.id` | `INTEGER` | Primary Key | Auto‑generated identifier |
+| `users.username` | `VARCHAR(256)` | Unique login handle | Unique index (`unique=1`) |
+| `users._password` | `VARCHAR(300)` | Stored hash | Nullable per original schema |
+| `session.id` | `VARCHAR(32)` | PK & session token | Indexed non‑unique |
+| `session.user_id` | `INTEGER` | FK → `users.id` | Nullable |
+| `films_reviews.review_id` | `INTEGER` | PK | Indexed non‑unique |
+| `films_reviews.user_id` | `INTEGER` | FK → `users.id` | Nullable |
+| `films_reviews.film_id` | `INTEGER` | FK → `films_base.id` | Nullable |
+| `films_base.id` | `INTEGER` | PK | Indexed non‑unique |
+| `films.model_id` | `INTEGER` | PK | Indexed non‑unique |
+| `films.id` | `INTEGER` | Optional external ID | Nullable |
+| `films.user_id` | `INTEGER` | FK → `users.id` | Nullable |
+| `films.title` | `VARCHAR` | Film title | Nullable |
+| `films.image` | `VARCHAR` | Image URL | Nullable |
 
-> **Warning** – The `print(Base.metadata.tables.keys())` line writes table names to stdout during migration start‑up; remove in production to avoid noisy logs. 
-<a name="alembic-ini-constraints"></a>
-## Operational Constraints  
+> **Critical assumption:** The downgrade does **not** repopulate data; it only restores table structures and indexes. Any existing data will be lost when the preceding `upgrade` drops the tables. 
+<a name="migration-upgrade"></a>
+## Upgrade – Schema Teardown  
 
-> **⚠️ Warning:** Execute migrations **only on a fresh database** or **after a verified backup**.  
-> Dropping tables (`op.drop_table`) and indexes (`op.drop_index`) are irreversible without a restore point. 
-<a name="alembic-ini-data-contract"></a>
-## Data Contract (Excerpt)  
+The `upgrade()` function dismantles the legacy data model by **dropping** all tables and their associated indexes that were introduced in earlier revisions. No data migration or transformation occurs; the operation is purely destructive.
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'f63a5988397e'` |
-| `down_revision` | `Union[str, Sequence[str], None]` | Parent migration | `'0a46a1d58dcf'` |
-| `op.drop_index` | `Callable` | Removes deterministic index (via `op.f`) | Targets: `session`, `users` |
-| `op.drop_table` | `Callable` | Deletes whole table, causing data loss | Tables: `session`, `films`, `users` |
-| `op.create_table` | `Callable` | Re‑creates table schema (downgrade) | Columns defined with SQLAlchemy types |
-| `op.create_index` | `Callable` | Re‑creates deterministic indexes | `unique=1` for `users.username` | 
-<a name="alembic-ini-interactions"></a>
-## Interaction Flow  
+| `ix_films_base_id` | Index | Remove index on `films_base.id` | Auto‑generated name via `op.f` |
+| `films_base` | Table | Remove legacy film base table | Contains `id`, `title`, `image` |
+| `ix_films_reviews_review_id` | Index | Remove index on `films_reviews.review_id` | |
+| `films_reviews` | Table | Remove review association table | Links `review_id` → `films_base.id` |
+| `ix_films_model_id` | Index | Remove index on `films.model_id` | |
+| `films` | Table | Remove primary film table | Primary key `model_id` |
+| `ix_session_id` | Index | Remove index on `session.id` | |
+| `session` | Table | Remove user session table | Stores JWT session IDs |
+| `ix_users_id` | Index | Remove non‑unique index on `users.id` | |
+| `ix_users_username` | Index | Remove unique index on `users.username` | |
+| `users` | Table | Remove user account table | Holds credentials |
 
-1. **CLI Invocation** – `alembic upgrade head` parses `alembic.ini`.  
-2. **Env Script** – `env.py` calls `config.get_main_option("sqlalchemy.url")` → creates engine.  
-3. **Migration Context** – `op.*` helpers (e.g., `op.drop_table`) use the engine to emit DDL.  
-4. **Logging** – Settings under `[loggers]` control console output during migration execution. 
-<a name="alembic-ini-purpose"></a>
-## Alembic Configuration (`alembic.ini`) – Purpose & Scope  
+> **Critical assumption:** The downgrade does **not** repopulate data; it only restores table structures and indexes. Any existing data will be lost when the preceding `upgrade` drops the tables. 
+<a name="migration-downgrade"></a>
+## Downgrade – Schema Restoration  
 
-The **`alembic.ini`** file supplies *static* settings for Alembic’s migration engine.  
-It is **read only** by `alembic/env.py`, which injects the values into the migration context.  
+The `downgrade()` function recreates the dropped schema, re‑establishing tables, columns, primary keys, foreign keys, and indexes exactly as they existed before the `upgrade`. No default data is inserted.
 
-| Setting | Type | Role | Notes |
-|---------|------|------|-------|
-| `script_location` | `str` | Base path for migration scripts | `%(here)s/alembic` |
-| `prepend_sys_path` | `str` | Paths added to `sys.path` before import | `.` (project root) |
-| `path_separator` | `str` | Delimiter for list‑type options | `os` (uses `os.pathsep`) |
-| `sqlalchemy.url` | `str` | Database connection string for migration runs | `sqlite:///test.db` |
-| `version_locations` (optional) | `str` | Alternate directories for version files | Not set – defaults to `script_location/versions` |
-| `[loggers]` / `[handlers]` / `[formatters]` | *config* | Logging configuration for Alembic commands | Verbose INFO for Alembic, WARN for SQLAlchemy | 
-<a name="alembic-ini-usage-tips"></a>
-## Practical Tips  
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `users` | Table | Restores user accounts | Columns: `id` (PK, `INTEGER`), `username` (`VARCHAR(256)`), `_password` (`VARCHAR(300)`); PK on `id` |
+| `ix_users_username` | Index | Unique index on `users.username` | `unique=1` |
+| `ix_users_id` | Index | Non‑unique index on `users.id` | |
+| `session` | Table | Restores session tracking | Columns: `id` (`VARCHAR(32)` PK), `user_id` (`INTEGER` FK → `users.id`) |
+| `ix_session_id` | Index | Non‑unique index on `session.id` | |
+| `films` | Table | Restores main film entity | Columns: `model_id` (PK, `INTEGER`), `id` (`INTEGER`), `user_id` (`INTEGER` FK → `users.id`), `title` (`VARCHAR`), `image` (`VARCHAR`) |
+| `ix_films_model_id` | Index | Non‑unique index on `films.model_id` | |
+| `films_reviews` | Table | Restores review linkage | Columns: `review_id` (PK, `INTEGER`), `user_id` (`INTEGER` FK → `users.id`), `film_id` (`INTEGER` FK → `films_base.id`), `content` (`VARCHAR`), `rate` (`INTEGER`) |
+| `ix_films_reviews_review_id` | Index | Non‑unique index on `films_reviews.review_id` | |
+| `films_base` | Table | Restores base film data | Columns: `id` (PK, `INTEGER`), `title` (`VARCHAR`), `image` (`VARCHAR`) |
+| `ix_films_base_id` | Index | Non‑unique index on `films_base.id` | |
 
-- Keep `sqlalchemy.url` in sync with `app/core/config.py` → `Settings.database_url`.  
-- When adding new migration directories, update `version_locations` and restart the Alembic CLI.  
-- Use the `[post_write_hooks]` section to auto‑format generated scripts (e.g., Black, Ruff). 
-<a name="add-film-review-migration"></a>
-## Add Film Review Migration (`b8613fd000d0`)
+**Interaction Summary**  
+- `upgrade()` is invoked when migrating **forward** to this revision, ensuring the obsolete schema is removed.  
+- `downgrade()` is invoked when rolling **back** to the previous revision, rebuilding the exact former structure to keep compatibility with older application code.  
 
-**Functional role** – Executes a *destructive* schema change that removes the legacy **session**, **users**, and **films** tables together with their deterministic indexes. The migration does **not** recreate any of these objects; it merely drops them so that a subsequent migration can introduce the new `films_base` and `films_reviews` structures.
+All operations rely exclusively on Alembic’s `op` API; no external libraries or custom logic are introduced. 
+<a name="migration-b8613fd000d0-upgrade"></a>
+## `b8613fd000d0_add_film_review` – Upgrade Actions  
 
-**Visible interactions** – Uses Alembic’s `op` helper (imported as `from alembic import op`) to issue DDL statements. No other project modules are referenced; the migration runs exclusively within Alembic’s command‑line context.
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `ix_session_id` | Index | **Removed** | `op.drop_index` on table **session** |
+| `session` | Table | **Removed** | Stores JWT session IDs |
+| `ix_users_id` | Index | **Removed** | Non‑unique index on **users.id** |
+| `ix_users_username` | Index | **Removed** | Unique index on **users.username** |
+| `users` | Table | **Removed** | Holds user credentials |
+| `ix_films_model_id` | Index | **Removed** | Non‑unique index on **films.model_id** |
+| `films` | Table | **Removed** | Primary film entity (model‑id PK) |
 
-**Logic flow**  
-1. `op.drop_index(op.f('ix_session_id'), table_name='session')` – removes the index that maps the session primary‑key column.  
-2. `op.drop_table('session')` – deletes the entire `session` table.  
-3. `op.drop_index(op.f('ix_users_id'), table_name='users')` and `op.drop_index(op.f('ix_users_username'), table_name='users')` – clear both user‑id and username indexes.  
-4. `op.drop_table('users')` – removes the user table.  
-5. `op.drop_index(op.f('ix_films_model_id'), table_name='films')` – discards the films index on `model_id`.  
-6. `op.drop_table('films')` – drops the films table.  
+> **Critical assumption:** The upgrade runs only when migrating forward to this revision; it irrevocably drops the listed tables and indexes, causing permanent data loss for those entities.
 
-The **downgrade** reverses these steps, recreating the three tables with their original column definitions and reinstating all indexes exactly as they existed before the upgrade.
+**Visible Interactions** – The fragment talks exclusively to Alembic’s `op` API, which in turn emits DDL statements to the underlying PostgreSQL/MySQL engine. No application code is invoked.
 
-> **Warning** – Running `upgrade()` **irreversibly deletes** all rows in `session`, `users`, and `films`. Apply only on a fresh development DB or after a verified backup.
+**Technical Logic Flow**  
+1. `upgrade()` is called by Alembic.  
+2. Sequential `op.drop_index` calls remove each index, referencing the target table name.  
+3. Sequential `op.drop_table` calls delete the tables after their indexes are gone.  
+4. Function returns `None`; the migration is considered successful if no exception is raised. 
+<a name="migration-b8613fd000d0-downgrade"></a>
+## `b8613fd000d0_add_film_review` – Downgrade Restoration  
 
---- 
-<a name="change-session-relations-migration"></a>
-## Change Session Relations Migration (`c6fa346e2960`)
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `films` | Table | Restored | Columns: `model_id` (PK), `id`, `user_id` (FK → `users.id`), `title`, `image` |
+| `ix_films_model_id` | Index | Restored | Non‑unique on `films.model_id` |
+| `users` | Table | Restored | Columns: `id` (PK), `username` (`VARCHAR(256)`), `_password` (`VARCHAR(300)`) |
+| `ix_users_username` | Index | Restored | Unique on `users.username` |
+| `ix_users_id` | Index | Restored | Non‑unique on `users.id` |
+| `session` | Table | Restored | Columns: `id` (`VARCHAR(32)` PK), `user_id` (FK → `users.id`) |
+| `ix_session_id` | Index | Restored | Non‑unique on `session.id` |
 
-**Functional role** – Refactors the `session` table’s foreign‑key column name from `user` to `user_id` and aligns the associated indexes with the new schema. Like the previous migration, it drops the old tables before they can be rebuilt with corrected relationships.
+> **Warning:** Downgrade recreates schema **without** repopulating data; any rows lost during the upgrade remain absent.
 
-**Visible interactions** – Operates solely through Alembic’s `op` object.
+**Visible Interactions** – Uses `op.create_table` and `op.create_index` to emit DDL that rebuilds the previous schema. No data migration logic is present.
 
-**Logic flow**  
-1. Remove `users` indexes (`ix_users_id`, `ix_users_username`) and drop the `users` table.  
-2. Remove the `session` index (`ix_session_id`) and drop the `session` table.  
+**Technical Logic Flow**  
+1. `downgrade()` invoked when rolling back.  
+2. `op.create_table` builds `films`, `users`, and `session` with their columns, primary keys, and foreign‑key constraints.  
+3. Corresponding `op.create_index` calls re‑establish each index.  
+4. Function completes, leaving the database in the pre‑upgrade state. 
+<a name="migration-c6fa346e2960-upgrade"></a>
+## `c6fa346e2960_change_session_realtions` – Upgrade Actions  
 
-The **downgrade** recreates the `session` table with a column named `user` (FK → `users.id`) and restores both `session` and `users` indexes to their original definitions.
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `ix_users_id` | Index | Removed | Non‑unique on `users.id` |
+| `ix_users_username` | Index | Removed | Unique on `users.username` |
+| `users` | Table | Removed | User accounts table |
+| `ix_session_id` | Index | Removed | Non‑unique on `session.id` |
+| `session` | Table | Removed | JWT session tracking table |
 
-> **Warning** – The `upgrade()` step erases all persisted session and user data.
+**Visible Interactions** – Same as above; only Alembic `op` commands are executed.
+
+**Technical Logic Flow** – Mirrors the pattern in `b8613fd000d0` upgrade: drop indexes first, then tables, returning `None`. 
+<a name="migration-c6fa346e2960-downgrade"></a>
+## `c6fa346e2960_change_session_realtions` – Downgrade Restoration  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `session` | Table | Restored | Columns: `id` (`VARCHAR(32)` PK), `user` (`INTEGER` FK → `users.id`) |
+| `ix_session_id` | Index | Restored | Non‑unique on `session.id` |
+| `users` | Table | Restored | Columns: `id` (PK), `username` (`VARCHAR(256)`), `_password` (`VARCHAR(300)`) |
+| `ix_users_username` | Index | Restored | Unique on `users.username` |
+| `ix_users_id` | Index | Restored | Non‑unique on `users.id` |
+
+> **Critical assumption:** The downgrade recreates the exact former schema; no row data is inserted.
+
+**Visible Interactions** – Again limited to Alembic’s DDL generation via `op.create_table`/`op.create_index`.
+
+**Technical Logic Flow** – Re‑creates `session` (with foreign key `user` → `users.id`) and `users`, then reinstates their indexes, completing the rollback. 
+<a name="migration-f63a5988397e-upgrade"></a>
+## `f63a5988397e_change_films_rel` – Upgrade Operations  
+
+**Component role** – Alembic **upgrade** script that removes the legacy *users*, *films* and *session* tables together with their indexes, preparing the database for a new relational design.
+
+**Visible interactions**  
+- `op.drop_index(op.f('ix_session_id'), table_name='session')` – deletes the non‑unique index on `session.id`.  
+- `op.drop_table('session')`, `op.drop_table('films')`, `op.drop_table('users')` – emit `DROP TABLE` DDL.  
+- `op.drop_index(..., table_name='users')` – removes `ix_users_id` and `ix_users_username` before the tables are dropped.  
+
+**Technical logic flow**  
+1. Migration engine invokes `upgrade()`.  
+2. Index on `session.id` is removed to avoid dependency errors.  
+3. `session` table is dropped.  
+4. `films` table is dropped.  
+5. User‑related indexes are removed, then the `users` table is dropped.  
+6. Function returns `None`; schema now lacks the three tables. 
+<a name="migration-f63a5988397e-downgrade"></a>
+## `f63a5988397e_change_films_rel` – Downgrade Restoration  
+
+**Component role** – Alembic **downgrade** script that recreates the exact pre‑upgrade schema, allowing a rollback without data restoration.
+
+**Visible interactions**  
+- `op.create_table('users', ...)` – issues `CREATE TABLE` with columns `id`, `username`, `_password`.  
+- `op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=1)` and `op.create_index(... 'ix_users_id')` – re‑establish user indexes.  
+- `op.create_table('films', ...)` – recreates `films` with FK `user_id → users.id`.  
+- `op.create_table('session', ...)` – recreates `session` with FK `user_id → users.id`.  
+- `op.create_index(op.f('ix_session_id'), 'session', ['id'], unique=False)` – restores session index.
+
+**Technical logic flow**  
+1. `downgrade()` is called during a rollback.  
+2. `users` table and its indexes are created first (no FK dependencies).  
+3. `films` table is created, referencing `users.id`.  
+4. `session` table is created, also referencing `users.id`.  
+5. Index on `session.id` is added.  
+6. Function ends, leaving the DB in its original state.
 
 ---
 
-### Data contract  
+### Data Contract
 
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'b8613fd000d0'` / `'c6fa346e2960'` |
-| `down_revision` | `str` | Parent migration | `'f63a5988397e'` / `'3253066141e8'` |
-| `op.drop_index` | Callable | Removes deterministic index | Uses `op.f()` for naming |
-| `op.drop_table` | Callable | Deletes whole table | Irreversible data loss |
-| `op.create_table` | Callable | Re‑creates table schema (downgrade) | Columns defined with SQLAlchemy types |
-| `op.create_index` | Callable | Re‑creates deterministic index | `unique=1` for `username` |
+| Entity | Type   | Role       | Notes |
+|--------|--------|------------|-------|
+| `users`   | Table   | Restored   | Columns: `id` (PK), `username` (VARCHAR 256, nullable), `_password` (VARCHAR 300, nullable). |
+| `ix_users_username` | Index | Restored | Unique on `users.username`. |
+| `ix_users_id` | Index | Restored | Non‑unique on `users.id`. |
+| `films`   | Table   | Restored   | Columns: `id` (PK), `user_id` (FK → `users.id`), `title` (VARCHAR), `image` (VARCHAR). |
+| `session` | Table   | Restored   | Columns: `id` (PK, VARCHAR 32), `user_id` (FK → `users.id`). |
+| `ix_session_id` | Index | Restored | Non‑unique on `session.id`. |
 
-These tables precisely capture the inputs (DDL commands) and outputs (schema state) of each migration step without any external assumptions. 
-<a name="migration-3ba776aed6c5-drop-legacy-tables"></a>
-## Migration 3ba776aed6c5 – Drop Legacy Tables  
+> **Warning:** The downgrade script **does not** repopulate any rows; all data removed during the upgrade is lost. 
+<a name="db-url-config"></a>
+## DB URL Configuration – INI & `core/config.Settings`  
 
-**Component Responsibility**  
-Executes a destructive schema change that removes the historic `users`, `films_base`, `films`, `films_reviews`, and `session` tables along with their indexes. This is the final step of a migration chain that clears obsolete models before a new design is applied.
+*The actual definition of `core.config.Settings` and any external INI file is **not present** in the supplied fragments.*  
+Consequently, the documentation can only state:
 
-**Visible Interactions**  
-- Calls the Alembic **operation proxy** `op` to issue DDL statements against the **SQLAlchemy‑engine** bound to the project's `SessionLocal`.  
-- No Python‑level objects from the service layer are touched; the migration runs only during `alembic upgrade`.
+- `Settings` is expected to expose a `DATABASE_URL` used by `db/database.py` to create the SQLAlchemy engine.  
+- If the DB URL is overridden elsewhere (e.g., via an `.ini` file or environment variable), the change must occur **before** the first import of `engine` so that all `SessionLocal` instances point to the new database.  
+- No runtime re‑initialisation of `engine` is shown; altering the URL after import will have **no effect** on existing sessions.  
 
-**Technical Logic Flow**  
-1. `op.drop_index(op.f('ix_users_id'), table_name='users')` – removes PK index.  
-2. `op.drop_index(op.f('ix_users_username'), table_name='users')` – removes unique username index.  
-3. `op.drop_table('users')` – deletes the `users` table.  
-4. Repeats steps 1‑3 for `films_base`, `films`, `films_reviews`, and `session` tables, each preceded by its associated index removal.  
-5. End of `upgrade`; `downgrade` recreates the dropped structures in reverse order using `op.create_table` and `op.create_index`.
-
-**Data Contract**  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'3ba776aed6c5'` |
-| `down_revision` | `str` | Parent migration | `'640dd27b82b8'` |
-| `op` | Alembic operation proxy | Issues DDL to DB | Methods: `drop_index`, `drop_table`, `create_table`, `create_index` |
-| `sa` | SQLAlchemy | Column/type helpers for `create_table` | Used only in `downgrade` |
-
-> **Warning** – This migration permanently deletes all data in the affected tables. Ensure a backup before applying to a production environment. 
-<a name="migration-640dd27b82b8"></a>
-## `640dd27b82b8_cahnge_film_review` – Schema Reset Migration  
-
-**Component Responsibility**  
-Replaces the legacy *films*, *films_base*, *films_reviews*, *session*, and *users* tables with a clean slate. The `upgrade()` path drops all indexes and tables; the `downgrade()` path rebuilds them exactly as they existed prior to this reset, preserving column definitions, primary‑key and foreign‑key constraints, and index names. 
-<a name="migration-94dcbdb61b10"></a>
-## Migration `94dcbdb61b10_change_db` – Full Schema Reset  
-
-**Component responsibility** – Executes an irreversible drop‑and‑re‑create of all core tables (`users`, `session`, `films`, `films_base`, `films_reviews`). It is used by the **FilmList** Alembic migration chain to bring a fresh development database to the initial state expected by the layered FastAPI services.
-
-### Visible interactions
-- Calls **Alembic** operation helpers `op.drop_index`, `op.drop_table`, `op.create_table`, `op.create_index`.
-- No direct runtime interaction with FastAPI endpoints; effects are observed when the DB is re‑initialised and the ORM models (`User`, `Session`, `Film`, `FilmReview`, `FilmBase`) are subsequently used by the repository layer.
-
-### Technical logic flow
-1. **Upgrade**  
-   - Drop indexes (`ix_*`) for each table.  
-   - Drop tables in dependency order (`films_base` → `films_reviews` → `films` → `session` → `users`).  
-2. **Downgrade** (re‑create)  
-   - Re‑create `users` table → add indexes (`ix_users_username` *unique*, `ix_users_id`).  
-   - Re‑create `session` table with FK → index on `id`.  
-   - Re‑create `films` with FK to `users` → index on `model_id`.  
-   - Re‑create `films_reviews` with FKs to `films_base` and `users` → index on `review_id`.  
-   - Re‑create `films_base` → index on `id`.
-
-### Data contract  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'94dcbdb61b10'` |
-| `down_revision` | `str` | Parent migration | `'3ba776aed6c5'` |
-| `op.drop_index` | Callable | Removes deterministic index | Uses `op.f` for naming |
-| `op.drop_table` | Callable | Deletes whole table | Irreversible data loss |
-| `op.create_table` | Callable | Re‑creates table schema | Columns defined with SQLAlchemy types |
-| `op.create_index` | Callable | Re‑creates deterministic index | `unique=1` for username |
-
-> **Warning** – Running `upgrade()` **irreversibly deletes** all rows in the affected tables. Apply only on a fresh development DB or after a verified backup. 
-<a name="migration-change-session-relations"></a>
-## Alembic Migration – Change Session Relations
-
-**Component Responsibility**  
-Executes a destructive schema revision (`0a46a1d58dcf`) that removes the legacy `users`, `session` and `films` tables together with their indexes. The downgrade path restores those tables with original column definitions, foreign‑key constraints and indexes.
-
-**Visible Interactions**  
-- Called by Alembic’s migration runner via `alembic upgrade head`.  
-- Uses the global Alembic `op` object to emit DDL commands against the database engine configured in `alembic.ini`.  
-- No direct imports from the FilmList application code; interaction is limited to the DB.
-
-**Technical Logic Flow**  
-1. **Upgrade**  
-   - `op.drop_index` removes `ix_users_id` and `ix_users_username` from `users`.  
-   - `op.drop_table('users')` deletes the `users` table.  
-   - `op.drop_index` removes `ix_session_id` from `session`.  
-   - `op.drop_table('session')` deletes the `session` table.  
-   - `op.drop_table('films')` deletes the `films` table.  
-2. **Downgrade**  
-   - Re‑creates `films` with columns `id`, `user_id`, `title`, `img_path` and a foreign key to `users.id`.  
-   - Re‑creates `session` (`id`, `user_id`) with a FK to `users.id` and adds index `ix_session_id`.  
-   - Re‑creates `users` (`id`, `username`, `_password`) and restores indexes `ix_users_username` (unique) and `ix_users_id`.
-
-**Data Contract**
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'0a46a1d58dcf'` |
-| `down_revision` | `str` | Parent migration | `'293791786db9'` |
-| `op` | Alembic operation proxy | Issues DDL to DB | Methods: `drop_index`, `drop_table`, `create_table`, `create_index` |
-| `sa` | SQLAlchemy | Column/type helpers | Used in `create_table` definitions |
-
-> **Warning** – This migration permanently drops data; ensure backups before applying to production. 
-<a name="migration-responsibility"></a>
-## Migration Purpose – Table Reset  
-
-The **`54c11c00dfc4_change_reiview_constaint.py`** migration is a *schema‑reset* operation for the legacy `users`, `films`, `films_reviews`, `wish_list*`, and `session` tables. During **upgrade** it permanently drops these tables and their indexes, effectively clearing all persisted data. The **downgrade** path restores the exact column definitions, primary‑key constraints, foreign‑key links, and index configurations that existed before the reset. 
-<a name="films-session-drop-migration-f63a5988397e"></a>
-## Films & Session Drop Migration (`f63a5988397e`)
-
-**Component responsibility** – Executes an *upgrade* that removes the legacy `session`, `users`, and `films` tables and their related indexes, preparing the schema for the forthcoming `films_base` and `films_reviews` structures. The *downgrade* restores those tables and indexes exactly as they existed prior to the upgrade.
-
-**Visible interactions** – Utilises only Alembic’s `op` helper (imported from `alembic`). No project modules, services, or runtime code are referenced; the migration runs inside Alembic’s CLI context.
-
-### Logic flow
-1. `op.drop_index(op.f('ix_session_id'), table_name='session')` – deletes the deterministic index on `session.id`.  
-2. `op.drop_table('session')` – drops the entire `session` table (all rows lost).  
-3. `op.drop_table('films')` – removes the `films` table (including its foreign‑key to `users`).  
-4. `op.drop_index(op.f('ix_users_id'), table_name='users')` – clears the index on `users.id`.  
-5. `op.drop_index(op.f('ix_users_username'), table_name='users')` – clears the unique index on `users.username`.  
-6. `op.drop_table('users')` – deletes the `users` table.  
-
-**Downgrade** reverses the above steps, recreating `users`, `films`, and `session` with their original column definitions and reinstating all indexes using `op.create_table` and `op.create_index`.
-
-> **Warning** – `upgrade()` irreversibly deletes all data in `session`, `users`, and `films`. Apply only on a fresh DB or after a verified backup.
-
-### Data contract
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'f63a5988397e'` |
-| `down_revision` | `Union[str, Sequence[str], None]` | Parent migration | `'0a46a1d58dcf'` |
-| `op.drop_index` | `Callable` | Removes deterministic index (via `op.f`) | Target tables: `session`, `users` |
-| `op.drop_table` | `Callable` | Deletes whole table, causing data loss | Tables: `session`, `films`, `users` |
-| `op.create_table` | `Callable` | Re‑creates table schema (downgrade) | Columns defined with SQLAlchemy types |
-| `op.create_index` | `Callable` | Re‑creates deterministic indexes | `unique=1` for `users.username` |
-
---- 
-<a name="downgrade-logic"></a>
-## Alembic Operations – Downgrade Path  
-
-The downgrade recreates each structure in reverse order using `op.create_table` with explicit `sa.Column` definitions, primary‑key constraints, and foreign‑key links, followed by `op.create_index` calls that restore the original index names and uniqueness flags.
-
-> **Warning** – This migration **irreversibly deletes** all rows in the affected tables. Apply only to a fresh development database or after a verified backup. 
-<a name="upgrade-logic"></a>
-## Alembic Operations – Upgrade Path  
-
-1. `op.drop_index(op.f('ix_films_id'), table_name='films')` – removes the non‑unique PK surrogate index.  
-2. `op.drop_table('films')` – deletes the `films` table.  
-3. `op.drop_table('wish_list_films')` – removes the junction table linking wish‑lists to films.  
-4. `op.drop_index(op.f('ix_users_id'), table_name='users')` and `op.drop_index(op.f('ix_users_username'), table_name='users')` – clear both PK‑related and unique‑username indexes.  
-5. `op.drop_table('users')` – erases the user accounts table.  
-6. `op.drop_index(op.f('ix_films_reviews_review_id'), table_name='films_reviews')` – drops the review‑id index.  
-7. `op.drop_table('films_reviews')` – removes the review table.  
-8. `op.drop_table('wish_list')` – deletes the wish‑list container.  
-9. `op.drop_index(op.f('ix_session_id'), table_name='session')` – clears the session‑id index.  
-10. `op.drop_table('session')` – eliminates the session tracking table. 
-<a name="component-responsibility"></a>
-## Component Responsibility  
-
-- **Reset legacy schema** to a clean state, preparing the database for a fresh model migration or for complete data purge.  
-- Guarantees that subsequent migrations start from a known baseline without residual constraints. 
-<a name="data-contract"></a>
-## Data Contract  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'54c11c00dfc4'` |
-| `down_revision` | `Union[str, Sequence[str], None]` | Parent migration | `'2256bb63d384'` |
-| `op` | Alembic operation proxy | Executes DDL commands (`drop_index`, `drop_table`, `create_table`, `create_index`) | Scoped to the current migration script |
-| `sa` | SQLAlchemy | Provides column/type helpers for `create_table` | Used only in `downgrade` |
-| Index names (`ix_*`) | auto‑generated via `op.f` | Consistent naming across dialects | `unique=False` unless explicitly set (`unique=1` for username) | 
-<a name="data-contract-640dd27b82b8"></a>
-**Data Contract**  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `revision` | `str` | Migration identifier | `'640dd27b82b8'` |
-| `down_revision` | `Union[str, Sequence[str], None]` | Parent migration | `'b8613fd000d0'` |
-| `op` | Alembic operation proxy | Executes DDL (`drop_index`, `drop_table`, `create_table`, `create_index`) | Scoped to this script |
-| `sa` | SQLAlchemy | Provides column/type constructors for `create_table` | Used only in `downgrade` |
-| Index names (`ix_*`) | auto‑generated via `op.f` | Guarantees deterministic naming across dialects | `unique=False` unless explicitly set |
-
-> **Warning** – Running `upgrade()` **irreversibly deletes** all rows in the affected tables. Apply only on a fresh development DB or after a verified backup. 
-<a name="logic-flow-640dd27b82b8"></a>
-**Technical Logic Flow**  
-
-| Step | Operation | Target |
-|------|-----------|--------|
-| 1 | `op.drop_index(..., 'films')` | removes `ix_films_model_id` |
-| 2 | `op.drop_table('films')` | deletes *films* table |
-| 3 | `op.drop_index(..., 'films_base')` | removes `ix_films_base_id` |
-| 4 | `op.drop_table('films_base')` | deletes *films_base* |
-| 5 | `op.drop_index(..., 'films_reviews')` | removes `ix_films_reviews_review_id` |
-| 6 | `op.drop_table('films_reviews')` | deletes *films_reviews* |
-| 7 | `op.drop_index(..., 'session')` | removes `ix_session_id` |
-| 8 | `op.drop_table('session')` | deletes *session* |
-| 9 | `op.drop_index(..., 'users')` (twice) | removes `ix_users_id` & `ix_users_username` |
-|10 | `op.drop_table('users')` | deletes *users* |
-
-The `downgrade()` mirrors this list in reverse, invoking `op.create_table` with explicit `sa.Column` specifications, then `op.create_index` to restore each index (e.g., `unique=1` for `ix_users_username`). 
-<a name="visible-interactions"></a>
-## Visible Interactions  
-
-- The script interacts **solely** with Alembic’s `op` object; no imports from the application layer (`app.*`) are referenced.  
-- No runtime data is read or written; the migration issues **DDL** statements to the target database engine configured in the Alembic environment. 
-<a name="visible-interactions-640dd27b82b8"></a>
-**Visible Interactions**  
-- Interacts **only** with Alembic’s `op` proxy and SQLAlchemy’s `sa` helpers.  
-- No imports from the application layer (`app.*`).  
-- Executes DDL statements against the database engine configured in the Alembic environment; no runtime data is read or written. 
+> **Warning:** Ensure any external configuration is loaded **prior** to `app.db.database` import to avoid silent connection to an outdated database. 
 <a name="auth-endpoints"></a>
-## Auth Endpoints (`app/api/v1/endpoints/auth.py`)
-
-**Responsibility** – Expose registration, login, session‑check and logout routes; delegate all business logic to `AuthService` and use `UserRepository(SessionLocal)` for persistence.
-
-**Visible Interactions**  
-- `verify_user` (dependency) validates the session cookie and returns a dict `{status, message, user_id?, session_id?}`.  
-- `AuthService` methods (`regist`, `login`, `logout`) receive plain Pydantic models (`UserInfo`, `SessionSearchingParams`).  
-- `UserRepository` is instantiated with the global `SessionLocal` factory; no explicit DB session is passed.
-
-**Logic Flow**  
-1. **POST /auth/regist** – Build `AuthService`; call `regist(user_info)`.  
-2. If `True` → JSON `{"status":"success","message":created_object}` else error message.  
-3. **POST /auth/login** – Call `login(user_params)`. On success set cookie `custom_session_id` with returned session token.  
-4. **GET /auth/check_auth** – Return success if `verify_user` reports `status=True`.  
-5. **POST /auth/logout** – After successful verification, invoke `logout(SessionSearchingParams(id=session_id))`; success yields JSON success, otherwise error.
-
-**Data Contract**
+## Auth Endpoints – Registration, Login, Session Check & Logout  
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `user_info` / `user_params` | `UserInfo` (Pydantic) | Input | Contains `username`, `password`. |
-| `verify_data` | `dict` | Dependency output | Keys: `status` (bool), `message` (str), optional `user_id`, `session_id`. |
-| `detail` (login) | `str` | Session token | Placed in response cookie. |
-| Returned JSON | `dict` | Output | Keys `status` (`"success"`/`"error"`), `message` or `result`. |
+| `UserInfo` | Pydantic model | Request body for **/regist** and **/login** | Contains `username`, `password` (fields not shown) |
+| `SessionSearchingParams` | Pydantic model | Parameter for **/logout** | Holds `id` (session identifier) |
+| `verify_user` | FastAPI dependency | Auth guard for **/check_auth** and **/logout** | Returns `{"status": bool, "message": str, "user_id": int, "session_id": int}` |
+| `AuthService` | Service class | Business logic for `regist`, `login`, `logout` | Instantiated with `UserRepository(SessionLocal)` |
+| `UserRepository` | Repository | CRUD on `User` ORM model | Receives a **SQLAlchemy session factory** (`SessionLocal`) |
 
-> **Warning** – The endpoints instantiate a new `UserRepository(SessionLocal)` per request; this bypasses FastAPI’s `Depends(get_db)` pattern and may lead to multiple engine connections if not managed elsewhere. 
+**Logic Flow**  
+1. Endpoint receives request → creates `AuthService` with a fresh `UserRepository`.  
+2. `regist` → calls `AuthService.regist(user_info)`. On success returns `{"status":"success","message":created_object}`; on conflict returns error message.  
+3. `login` → `AuthService.login(user_params)`. If successful, sets cookie `custom_session_id` with token value; returns success flag.  
+4. `check_auth` → dependency `verify_user` validates cookie, returns status/message.  
+5. `logout` → after dependency passes, calls `AuthService.logout(SessionSearchingParams(...))`; returns success or error.
+
+**Data Contract**  
+
+| Entity | Input | Output | Side‑effects |
+|--------|-------|--------|--------------|
+| `/regist` | `UserInfo` JSON | `{status, message}` | Inserts new `User` row if username free |
+| `/login` | `UserInfo` JSON, `Response` object | Cookie set + `{status}` | No DB write, reads `User` |
+| `/check_auth` | – | `{status}` or `{status, message}` | Reads session store |
+| `/logout` | – | `{status}` or `{status, message}` | May delete session record | 
 <a name="film-endpoints"></a>
-## Film & Wish‑List Endpoints (`app/api/v1/endpoints/film.py`)
+## Film Endpoints – Search, Wish‑List Management & Detail Retrieval  
 
-**Responsibility** – Provide film search, detail retrieval, and wish‑list manipulation for authenticated users; rely on `FilmService` and `WishListService`.
-
-**Visible Interactions**  
-- `verify_user` guards every route.  
-- `FilmService(FilmRepository(SessionLocal))` handles external TMDB queries and auto‑creation of missing `Film` rows.  
-- `WishListService(WishListRepository(SessionLocal))` manages user‑specific wish‑list records.  
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `verify_user` | Dependency | Auth guard for all routes | Same shape as above |
+| `FilmSerchingParams` | Pydantic | Input for **/film/{film_id}** | Holds `id` |
+| `AddToWishList` / `WishListCreator` | Pydantic | Payload for wish‑list ops | Carry `user_id`, `film_id` |
+| `FilmService` / `WishListService` | Service | Business logic | Instantiated with respective repositories |
+| `FilmRepository` / `WishListRepository` | Repository | DB access | Use `SessionLocal` |
 
 **Logic Flow**  
-1. **GET /film/search_film** – On auth success, call `find_film_by_name(q=query)`; return list under `result`.  
-2. **GET /film/{film_id}** – Call `get_info_about_film(FilmSerchingParams(id=film_id))`; forward film object on success.  
-3. **POST /film/wish_list/{film_id}** – Build `AddToWishList(user_id, film_id)`; invoke `add_film_to_wish_list`; return updated wish‑list.  
-4. **DELETE /film/wish_list/{film_id}** – Same DTO, call `remove_film_from_wish_list`; success yields simple success JSON.  
-5. **GET /film/wish_list** – Call `get_wish_list(WishListCreator(user_id))`; reverse list before returning.
+1. Auth dependency validates request.  
+2. `search_film` → `FilmService.find_film_by_name(q=query)` → returns list of films.  
+3. `add_film_to_wish_list` / `del_film_from_wish_list` → `WishListService` adds or removes record via `WishListRepository`.  
+4. `get_wish_list` → retrieves list, reverses order before returning.  
+5. `get_info_about_film` → `FilmService.get_info_about_film(FilmSerchingParams(id))` → returns film details.
 
-**Data Contract**
+**Data Contract**  
 
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| `query` | `str` | Input (search) | Required query term. |
-| `film_id` | `int` | Path param | Target film identifier. |
-| `AddToWishList` | Pydantic | Input (wish‑list ops) | Fields `user_id`, `film_id`. |
-| `WishListCreator` | Pydantic | Input (list retrieval) | Field `user_id`. |
-| Service return | `(bool, object)` | Output | `bool` indicates success; `object` is either film data, wish‑list, or error placeholder. |
-| Returned JSON | `dict` | Output | Same shape as auth endpoints (`status`, optional `result`, `message`). |
+| Endpoint | Input | Output | Side‑effects |
+|----------|-------|--------|--------------|
+| `GET /film/search_film` | `query` string | `{status, result: films[]}` | Read‑only |
+| `POST /film/wish_list/{film_id}` | Path `film_id` | `{status, result}` or error | Insert wish‑list row |
+| `DELETE /film/wish_list/{film_id}` | Path `film_id` | `{status}` or error | Delete wish‑list row |
+| `GET /film/wish_list` | – | `{status, result: list}` | Read‑only |
+| `GET /film/{film_id}` | Path `film_id` | `{status, result}` or error | Read‑only | 
+<a name="review-endpoints"></a>
+## Review API – Add / List / My‑Reviews / Delete  
 
-> **Critical** – All endpoints depend on `verify_user`; if it returns `status=False`, the route aborts early with the provided `message`. No additional validation is performed inside these functions. 
-<a name="add-review"></a>
-## Review Endpoint – Add Review (`POST /review/{film_id}`)
-
-**Responsibility** – Accept a `ReviewForAdd` payload, validate the caller via `verify_user`, and delegate creation to `ReviewService`. Returns the persisted **Review** model on success.
+**Component Responsibility**  
+`app/api/v1/endpoints/review.py` implements the *public HTTP façade* for user‑generated film reviews. It translates validated FastAPI request data into **service layer** calls (`ReviewService`) and returns plain JSON responses. No ORM objects are touched directly; persistence is delegated to `FilmReviewRepository` via a fresh `SessionLocal` instance per request.
 
 **Visible Interactions**  
-- `verify_user` (from `app.core.dependencies`) supplies `status`, `user_id`, and a default *unauthorized* message.  
-- `ReviewService` is instantiated with `FilmReviewRepository(SessionLocal)`.  
-- `ReviewService.add_review` receives a fully‑populated `Review` ORM instance and returns `(bool, Review|None)`.
-
-**Logic Flow**  
-1. FastAPI injects `verify_data` from `Depends(verify_user)`.  
-2. If `verify_data["status"]` is **True**, build `Review` (`film_id`, `user_id` from `verify_data`, `content`, `rate`).  
-3. Call `review_service_object.add_review(review)`.  
-4. On `status=True` → respond `{"status":"success","result":review_object}`; otherwise → `{"status":"error","message":message}`.  
-
-**Data Contract**
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `review_info` | `ReviewForAdd` (Pydantic) | Input body | Contains `film_id`, `content`, `rate`. |
-| `verify_data` | `dict` | Dependency output | Keys: `status` (bool), `user_id` (int), `message` (str). |
-| `review_object` | `Review` (ORM) | Service output | Persisted review instance returned on success. |
-| Returned JSON | `dict` | Output | `status` (`"success"`/`"error"`), `result` (review) or `message`. |
+| `router` | `APIRouter` | Registers `/review` routes under the *v1* router | Tags: `["review"]` |
+| `verify_user` | Dependency | Auth guard – extracts session cookie, validates via `AuthService` | Returns `{status, user_id, session_id, message}` |
+| `ReviewService` | Service | Business logic for add, get, delete reviews | Constructed with `FilmReviewRepository(SessionLocal)` |
+| `FilmReviewRepository` | Repository | Low‑level CRUD using a **new** `SessionLocal` session | Not injected via FastAPI DI, instantiated per endpoint |
+| `Review`, `ReviewForAdd`, `ReviewSearchingParams` | Pydantic models | Input validation & response shaping | `ReviewForAdd` supplied by client, `Review` used internally |
 
-> **Warning** – Each request creates a new `FilmReviewRepository(SessionLocal)` bypassing FastAPI’s `Depends(get_db)`. This can spawn multiple DB connections if the session lifecycle isn’t otherwise controlled. 
-<a name="delete-review"></a>
-## Review Endpoint – Delete Review (`DELETE /review/{review_id}`)
+**Technical Logic Flow**  
 
-*After authorization, calls `ReviewService.delete_review` with `ReviewSearchingParams(review_id, user_id)`. Success yields `{"status":"success"}`; failure falls back to the dependency’s error message.* 
-<a name="list-my-reviews"></a>
-## Review Endpoint – List My Reviews (`GET /review/my`)
+1. **Auth** – `verify_user` reads the `session_id` cookie. If absent, returns `status=False`.  
+2. **Add Review (`POST /review/{film_id}`)**  
+   - Receives `review_info: ReviewForAdd`.  
+   - On successful auth, creates `ReviewService` → `add_review(Review(...))`.  
+   - `Review` is built from `review_info` plus `user_id` from auth data.  
+   - Service returns `(status, review_object)`.  
+   - Success → `{"status":"success","result":review_object}`; otherwise error with auth message.  
+3. **List All Reviews (`GET /review/`)**  
+   - Optional query params resolved into `ReviewSearchingParams` via FastAPI `Depends()`.  
+   - Auth check → service `get_reviews(filters)`.  
+   - Returns list under `result`.  
+4. **List My Reviews (`GET /review/my`)**  
+   - Builds `ReviewSearchingParams(user_id=auth_user_id)` and reuses `get_reviews`.  
+   - Returns `results` (note plural key).  
+5. **Delete Review (`DELETE /review/{review_id}`)**  
+   - Auth check → service `delete_review(ReviewSearchingParams(review_id, user_id))`.  
+   - If service reports success → `{"status":"success"}`; else auth error.  
 
-*Uses `verify_user` to inject `user_id`, builds `ReviewSearchingParams(user_id=…)`, and returns the user’s reviews.* 
-<a name="list-reviews"></a>
-## Review Endpoint – List All (`GET /review/`)
+**Endpoint Data Contract**  
 
-*Validates user, forwards `ReviewSearchingParams` (auto‑populated from query) to `ReviewService.get_reviews`, returns list under `result`.* 
-<a name="film-model"></a>
-## Film Model & Wish‑List Association  
+| Endpoint | Input | Output | Side‑effects |
+|----------|-------|--------|--------------|
+| `POST /review/{film_id}` | JSON body `ReviewForAdd` (`film_id`, `content`, `rate`) + session cookie | `{"status":"success","result":<Review>}` or `{"status":"error","message":…}` | Inserts a new `Review` row (if auth passes) |
+| `GET /review/` | Query parameters mapped to `ReviewSearchingParams` (optional filters) + session cookie | `{"status":"success","result":[<Review>,…]}` or error | Read‑only DB query |
+| `GET /review/my` | Session cookie only | `{"status":"success","results":[<Review>,…]}` or error | Read‑only DB query filtered by current `user_id` |
+| `DELETE /review/{review_id}` | Path `review_id` + session cookie | `{"status":"success"}` or `{"status":"error","message":…}` | Deletes matching `Review` row belonging to the authenticated user |
 
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| **Film** | SQLAlchemy model | Stores basic film data (`id`, `title`, `image`) | Primary key `id` indexed |
-| **wish_list_films** | Association table | Many‑to‑many link between `WishList` and `Film` | Columns `wish_list_id` → `wish_list.user_id`, `film_id` → `films.id` |
-| **WishList** | SQLAlchemy model | Holds a user’s selected films | `user_id` PK, `films` relationship via `wish_list_films`; `get_films()` returns list of film IDs |
-
-> **Logic:** When a `WishList` instance is loaded, SQLAlchemy populates `films` through the secondary table; calling `get_films()` provides a plain list of IDs for API responses. 
-<a name="filmreview-model"></a>
-## FilmReview Model – Uniqueness Guard  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| **FilmReview** | SQLAlchemy model | Represents a user’s rating/comment on a film | Unique constraint `uq_user_film_review` prevents duplicate reviews per `(user_id, film_id)` | 
-<a name="user-model"></a>
-## User Model – Password Management  
-
-| Entity | Type | Role | Notes |
-|--------|------|------|-------|
-| **User** | SQLAlchemy model | Authentication principal | `username` unique; `_password` stores hashed value |
-| **password (property)** | Python property | Setter hashes via `hash_password`; getter returns raw stored hash | `check_password()` verifies with `verify_password` |
-| **Session** | SQLAlchemy model | Tracks active login sessions | PK `id` generated by `get_rand_hash`; links to `User` | 
-<a name="base-repository"></a>
-## BaseRepository – CRUD Core  
-
-| Method | Input | Output / Side‑Effect | Notes |
-|--------|-------|----------------------|-------|
-| `read_by_options(schema, eager=False)` | Pydantic `BaseModel` with optional filters | `{"all": [objects], "query": Query}` | Builds filter list from non‑null fields |
-| `create(schema)` | Pydantic model | `(bool success, ORM instance or None)` | Commits or rolls back on exception |
-| `read_by_id(schema, eager=False)` | Pydantic model with primary key | ORM instance or `None` | Delegates to `read_by_options` |
-| `update_element_by_id(id_schema, change_schema)` | PK schema, change schema | Updated ORM instance or `None` | Sets attributes then commits |
-| `delete_object(schema)` | PK schema | `True` if deleted, `False` otherwise | Performs `session.delete` + commit |
-
-> **Assumption:** All repository instances receive a `session_factory` (usually `SessionLocal`) from FastAPI dependencies; the session is created lazily and closed in `__del__`. 
-<a name="concrete-repositories"></a>
-## Concrete Repository Instantiations  
-
-| Repository | Base Model | Purpose |
-|------------|------------|---------|
-| `FilmRepository` | `Film` | Exposes `BaseRepository` CRUD for film records |
-| `FilmReviewRepository` | `FilmReview` | Manages review persistence and uniqueness |
-| `UserRepository` | `User` | Handles user lookup/creation |
-| `SessionRepository` | `Session` | Validates and revokes login sessions |
-
-*All concrete classes simply call `super().__init__(session_factory, Model)`; no additional logic is present in the supplied fragment.* 
-<a name="wishlist-repository-update-element-films"></a>
-## WishListRepository · `update_element_films` – Persist Film‑ID Collection
-
-**Component responsibility**  
-Updates the `films` attribute of an existing `WishList` ORM instance and guarantees the change is flushed to the database.
-
-**Visible interactions**  
-1. Receives a *primary‑key holder* (`schema_id`) and an `UpdateWishList` payload.  
-2. Calls `self.read_by_id(schema_id)` to obtain `curr_object` (`WishList`).  
-3. Mutates `curr_object.films` in‑place, then uses the repository‑owned SQLAlchemy `session` for persistence.
-
-### Technical logic flow
-1. `curr_object = self.read_by_id(schema_id)` – fetches the target row.  
-2. `setattr(curr_object, "films", update_schema.films)` – assigns the new list of film IDs (already converted to `list[Film]` upstream).  
-3. `session = self.get_session()` – obtains the transaction context.  
-4. **Commit attempt**  
-   ```python
-   try:
-       session.commit()
-       session.refresh(curr_object)
-   except Exception:
-       session.rollback()
-       return False, None
-   ```  
-5. On success, returns `True, curr_object`.
-
-> **Warning**: The method assumes every key in `update_schema` matches a column on `WishList`. Unexpected fields are set without validation.
-
-### Data contract
+> **⚠️ Assumption Notice** – The fragment creates a *new* `SessionLocal` for each endpoint rather than re‑using the `get_db` dependency; this may lead to multiple concurrent sessions per request. No transaction handling beyond the repository’s `add/commit` is shown. 
+<a name="router-aggregation"></a>
+## Router Aggregation – v1 Inclusion  
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `schema_id` | `BaseModel` (e.g., `WishListCreator`) | Holds the primary key of the wish‑list to update | Passed to `read_by_id` |
-| `update_schema` | `BaseModel` (`UpdateWishList`) | Payload with mutable fields; `films` = `list[int]` | Converted to `list[Film]` before this method |
-| `session` | `Session` (SQLAlchemy) | Transaction context | Obtained via `BaseRepository.get_session()` |
-| `curr_object` | `WishList` ORM instance | The row being mutated | Updated in‑place |
-| Return value | `tuple[bool, WishList|None]` | `(success, updated_object)` | `None` also returned when target not found or on error | 
-<a name="wishlistrepository-update-element-films"></a>
-## WishListRepository.update_element_films
+| `router` (in `app/api/v1/routes.py`) | `APIRouter` | Top‑level router with prefix `/v1` | Includes `auth.router`, `film.router`, `review.router` |
+| `router.tags = router.tags.append("v1")` | Statement | Attempts to add `"v1"` tag to each sub‑router | **Incorrect usage** – `list.append` returns `None`; tags become `None`. No runtime error but tags are lost. |
 
-**Responsibility**  
-Updates a `WishList` ORM instance’s mutable fields, converting a list of film IDs into `Film` objects for the `films` relationship.
+**Technical Flow**  
+- FastAPI app (`app/main.py`) imports `routers` and calls `app.include_router(v1_api_router)`.  
+- Each sub‑router (including the **Review** router) becomes reachable under `/v1/...`.  
+
+**Critical Warning** – The tag‑mutation line mutates `router.tags` incorrectly; the intended effect of adding a `"v1"` tag does not occur. This may affect autogenerated OpenAPI documentation.  
+
+---  
+
+*All information above is derived exclusively from the provided source files; no external assumptions have been introduced.* 
+<a name="model-film"></a>
+## Film Model  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `Film` | `SQLAlchemy` ORM class | Represents a catalogue entry. | Columns: `id` (PK), `title`, `image`. | 
+<a name="model-wishlist"></a>
+## WishList Model  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `WishList` | `SQLAlchemy` ORM class | Holds a user’s desired films. | PK `user_id` → `users.id`; relationship `films` via association table `wish_list_films`. |
+| `wish_list_films` | `Table` | Association between `WishList` and `Film`. | Composite PK (`wish_list_id`, `film_id`). |
+| `WishList.get_films()` | method | Returns list of film IDs in the list. | Implements `list(map(lambda obj: obj.id, list(self.films)))`. | 
+<a name="model-filmsreview"></a>
+## FilmReview Model  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `FilmReview` | `SQLAlchemy` ORM class | Stores a single user rating for a film. | PK `review_id`; FK `user_id` → `users.id`; FK `film_id` → `films.id`; fields `content`, `rate`. |
+| `UniqueConstraint('user_id','film_id')` | DB constraint | Enforces one review per user‑film pair. | 
+<a name="model-user"></a>
+## User & Session Models  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `User` | `SQLAlchemy` ORM class | Authenticated principal. | Columns `id`, `username`, `_password`; property `password` hashes on set; `check_password()` verifies. |
+| `Session` | `SQLAlchemy` ORM class | Simple token store for cookie‑based auth. | PK `id` generated via `get_rand_hash`; FK `user_id` → `users.id`. |
+| `User.wish_list` | relationship | One‑to‑one `WishList`. | `cascade="all, delete-orphan"`. | 
+<a name="repository-base"></a>
+## BaseRepository  
+
+Implements generic CRUD using a supplied `session_factory` and target `model`.  
+
+| Method | Input | Output | Side‑effects |
+|--------|-------|--------|--------------|
+| `get_session()` | – | `Session` instance | Lazily creates per‑repo session. |
+| `create(schema)` | Pydantic model | `(bool success, ORM instance)` | `add`, `commit`, `refresh`; rolls back on exception. |
+| `read_by_options(schema, eager=False)` | Pydantic filter model | `{"all": list, "query": Query}` | Builds dynamic `filter` chain. |
+| `read_by_id(schema, eager=False)` | PK schema | ORM instance or `None` | Calls `read_by_options`. |
+| `update_element_by_id(id_schema, change_schema)` | PK + changes | Updated ORM or `None` | Sets attrs, commits, refreshes per field. |
+| `delete_object(schema)` | PK schema | `bool` | Deletes and commits. |
+| `__del__()` | – | – | Closes open session. | 
+<a name="repository-film"></a>
+## FilmRepository  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `FilmRepository` | subclass of `BaseRepository` | Dedicated repo for `Film`. | Constructor passes `Film` model to base. | 
+<a name="repository-review"></a>
+## FilmReviewRepository  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `FilmReviewRepository` | subclass of `BaseRepository` | Handles CRUD for `FilmReview`. | Uses `FilmReview` model. | 
+<a name="repository-user"></a>
+## UserRepository & SessionRepository  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `UserRepository` | subclass of `BaseRepository` | CRUD for `User`. | |
+| `SessionRepository` | subclass of `BaseRepository` | CRUD for `Session`. | |
+
+> **Critical Note** – Each repository maintains its own session via `self.session_factory()`. If instantiated per request, this aligns with the FastAPI `get_db` pattern; otherwise multiple concurrent sessions could arise, potentially causing transaction overlap. 
+<a name="repository-wishlist-update"></a>
+## `WishListRepository.update_element_films`  
+
+**Component Role**  
+Implements an in‑place mutation of a `WishList` entity’s film collection. It bridges the service layer request (an `UpdateWishList` Pydantic model) to the persistence layer, ensuring supplied film IDs are materialized as `Film` ORM objects before being attached to the target `WishList`.
 
 **Visible Interactions**  
-- Calls `self.get_session()` from `BaseRepository` → obtains a SQLAlchemy `Session`.  
-- Reads the target wish‑list via `self.read_by_id(schema_id)`.  
-- Queries `Film` model (`session.query(Film).filter(Film.id.in_(value)).all()`).  
-- Commits the session; on failure rolls back and returns `False, None`.
+- Calls `BaseRepository.get_session()` → obtains a scoped SQLAlchemy `Session`.  
+- Invokes `BaseRepository.read_by_id(schema_id)` to fetch the target `WishList`.  
+- Uses the injected `session` to query the `Film` model (`session.query(Film).filter(Film.id.in_(value))`).  
+- Persists changes via `session.commit()` / `session.refresh()`.  
+- Propagates exceptions back as a `(False, None)` tuple.
 
 **Logic Flow**  
-1. Acquire `session`.  
-2. Retrieve current wish‑list (`curr_object`). If missing → `return None`.  
-3. Serialize `update_schema` (`model_dump()`).  
+1. Acquire a DB session.  
+2. Retrieve the existing `WishList` (`curr_object`). If missing → `return None`.  
+3. Convert the incoming `update_schema` (`UpdateWishList`) to a plain dict (`model_dump()`).  
 4. Iterate over each field:  
-   - If key is `"films"` convert supplied ID list to ORM `Film` objects.  
-   - Assign the processed value to the attribute on `curr_object`.  
-5. Attempt `session.commit()` and `session.refresh(curr_object)`.  
-6. On exception: `session.rollback()` → `return False, None`.  
-7. Success → `return True, curr_object`.
+   - When the key is `"films"`, replace the list of IDs with the corresponding `Film` ORM instances fetched in step 3.  
+   - Assign the resolved value to the attribute on `curr_object`.  
+5. Attempt to `commit` the transaction; on success `refresh` the object, otherwise `rollback` and return `(False, None)`.  
+6. Return `(True, curr_object)` on success.
 
 **Data Contract**
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `schema_id` | `BaseModel` (e.g., `WishListCreator`) | Primary‑key holder for the wish‑list to update | Passed to `read_by_id` |
-| `update_schema` | `BaseModel` (`UpdateWishList`) | Payload with fields to modify; `films` = `list[int]` | Converted to `list[Film]` inside method |
-| `session` | `Session` (SQLAlchemy) | Transaction context | Obtained via `BaseRepository.get_session()` |
-| `curr_object` | `WishList` ORM instance | Target row being mutated | Updated in‑place |
-| Return value | `tuple` | `(bool success, WishList|None)` | `None` also returned when target not found |
+| `schema_id` | Pydantic model (e.g., `WishListCreator` or ID schema) | Identifier of the `WishList` to update | Passed to `read_by_id`. |
+| `update_schema` | `UpdateWishList` (`list[int]` for `films`) | Desired new state for mutable fields | Only `films` currently processed. |
+| `session` | `SQLAlchemy Session` | Unit‑of‑work for DB operations | Created lazily per repo. |
+| `curr_object` | `WishList` ORM instance | Target entity being mutated | May be `None` if not found. |
+| Return | `Tuple[bool, WishList | None]` | Success flag and refreshed object | `None` also returned when target missing. |
 
-> **Warning**: The method assumes `update_schema` contains only fields present on the `WishList` model; unexpected keys will be set as attributes without validation. 
-<a name="password-hashing"></a>
-## Password Hashing Utilities (`hash_password` & `verify_password`)
+> **Warning** – The method assumes `update_schema` contains a `films` list of existing `Film.id` values; missing or invalid IDs will result in an empty collection without explicit validation. 
+<a name="review-service"></a>
+## ReviewService – Review Management  
 
-**Responsibility** – Encode a clear‑text password into a bcrypt hash and later verify a candidate password against that hash.
+**Responsibility** – Orchestrates review creation and retrieval, delegating persistence to `FilmReviewRepository` and film validation to `FilmService`.  
 
-**Visible Interactions** – Uses the third‑party `bcrypt` library; no other project components are touched.
-
-**Logic Flow – `hash_password`**
-1. Generate a salt with `bcrypt.gensalt()`.  
-2. Encode the plain password to UTF‑8 bytes.  
-3. Compute `bcrypt.hashpw(password_bytes, salt)` → hashed bytes.  
-4. Decode hashed bytes to UTF‑8 string and return.
-
-**Logic Flow – `verify_password`**
-1. Encode both `plain_password` and stored `hashed_password` to UTF‑8 bytes.  
-2. Call `bcrypt.checkpw(plain_bytes, hashed_bytes)`.  
-3. Return the Boolean result.
-
-**Data Contract**
+### Data Contract  
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `password` / `plain_password` | `str` | User‑supplied clear text | Must be UTF‑8 encodable |
-| `hashed_password` | `str` | Stored bcrypt hash | Produced by `hash_password` |
-| Return (`hash_password`) | `str` | bcrypt hash string (includes salt & cost) | Ready for DB storage |
-| Return (`verify_password`) | `bool` | Verification outcome | `True` if match, else `False` |
+| `review_info` | `Review` (Pydantic) | Input DTO for `add_review` | Must contain `film_id` |
+| `film_review_repository` | `FilmReviewRepository` | Dependency | Provides `create`, `read_by_options`, `delete_object` |
+| `film_service` | `FilmService` | Dependency | Validates film existence via `get_info_about_film` |
+| Return (add) | `Tuple[bool, Review | None]` | Success flag & persisted ORM object | `False, None` if film missing |
+| `review_info` (get) | `ReviewSearchingParams` | Filter DTO for `get_reviews` | Returns list from `read_by_options(...).get("all")` |
+| `review_info` (delete) | `ReviewSearchingParams` | Filter DTO for `delete_review` | Returns boolean status |
 
-> **Critical** – The functions **do not** perform any additional validation (e.g., password strength) and assume the inputs are well‑formed strings. 
-<a name="random-hash-generation"></a>
-## Random Hash Generation (`get_rand_hash`)
+> **Logic Flow** – `add_review` → `FilmService.get_info_about_film` (fails → abort) → `FilmReviewRepository.create` → return. `get_reviews` simply forwards repository query. `delete_review` forwards deletion request. 
+<a name="wishlist-service"></a>
+## WishListService – Wish‑list Operations  
 
-**Responsibility** – Produces a deterministic‑length pseudo‑random hexadecimal string using `uuid.uuid4()`.
+**Responsibility** – Handles creation, auto‑creation, and mutation of user wish‑lists, using `WishListRepository` for persistence and `FilmService` for film lookup/creation.  
 
-**Visible Interactions** – Relies solely on Python’s standard `uuid` module; no external services or project‑level dependencies.
-
-**Logic Flow**
-1. Call `uuid.uuid4()` → generates a random UUID (128‑bit).  
-2. Access `.hex` → 32‑character hex representation.  
-3. Slice `[:length]` where `length` defaults to `32`.  
-4. Return the sliced string.
-
-**Data Contract**
+### Data Contract  
 
 | Entity | Type | Role | Notes |
 |--------|------|------|-------|
-| `length` | `int` (default = 32) | Desired length of the output hash | Must be ≤ 32; longer values are silently truncated |
-| Return | `str` | Hex‑encoded random hash | Characters: `0‑9a‑f` |
+| `wish_list_creator` | `WishListCreator` | Input for `create_wish_list` / `auto_create_wish_list` | Contains `user_id` |
+| `add_info` / `remove_info` | `AddToWishList` | DTO with `user_id`, `film_id` for mutation | Same schema used for add/remove |
+| `wish_list_repository` | `WishListRepository` | Dependency | Provides `create`, `read_by_id`, `update_element_films` |
+| `film_service` | `FilmService` | Dependency | Provides `auto_create_film` |
+| Return (mutations) | `Tuple[bool, WishList | None]` | Success flag & updated object | `True` with updated object; `False, None` on failure |
+| Return (`get_wish_list`) | `Tuple[bool, list[int] | None]` | Success flag & list of film IDs | `False, None` if auto‑creation fails |
 
-> **Warning** – The function does **not** guarantee cryptographic security; it is suitable for identifiers, not for password hashing. 
+> **Logic Flow** – `add_film_to_wish_list` → `FilmService.auto_create_film` (ensures film exists) → `auto_create_wish_list` (ensures wish‑list exists) → merge film IDs → `WishListRepository.update_element_films`.  
+> `remove_film_from_wish_list` follows analogous steps, removing the ID before update. 
+<a name="tmdb-api"></a>
+## TMDB – External Film Data Provider  
+
+**Responsibility** – Wraps TMDB REST endpoints; converts raw JSON to `FilmInfo` Pydantic models via `Movie` helper.  
+
+### Data Contract  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `api_key` | `str` (default from `settings.TMDB_API_KEY`) | Authentication header | Injected at construction |
+| `q` | `str` | Query string for `find_the_films` | Returns list of `FilmInfo` |
+| `film_id` | `int` | Identifier for `find_film_by_id` | Returns single `FilmInfo` or `None` |
+| Return (`find_the_films`) | `list[FilmInfo]` | Collection of matching films | No pagination handling |
+| Return (`find_film_by_id`) | `FilmInfo | None` | Exact match or `None` on error |
+
+> **Warning** – The `Movie.image` property uses a double‑quoted string inside an f‑string; syntax error will raise at import time.  
+
+*All interactions are confined to the shown methods; no external caching or retry logic is present.* 
+<a name="hash-util"></a>
+## Password‑Hash Utilities (`app/util/hash.py`)
+
+**Responsibility** – Provides deterministic helpers for generating random identifiers and securely hashing user passwords. These functions are consumed by the authentication layer (`AuthService`) and any component that needs a unique token (e.g., email verification). No I/O or database access occurs here.
+
+### Data Contract  
+
+| Entity | Type | Role | Notes |
+|--------|------|------|-------|
+| `length` | `int` (default = 32) | Input for `get_rand_hash` | Truncates a UUID‑4 hex string. |
+| `rnd_hash` | `str` | Return of `get_rand_hash` | Random alphanumeric token, not cryptographically secure. |
+| `password` | `str` | Input for `hash_password` | Plain‑text credential. |
+| `hashed` | `str` | Return of `hash_password` | bcrypt hash encoded as UTF‑8 string. |
+| `plain_password` | `str` | Input for `verify_password` | Candidate password. |
+| `hashed_password` | `str` | Input for `verify_password` | bcrypt hash produced by `hash_password`. |
+| `bool` | – | Return of `verify_password` | `True` if passwords match, else `False`. |
+
+> **Warning** – `get_rand_hash` uses `uuid.uuid4()`; it is suitable for identifiers but **not** for cryptographic purposes.
+
+### Visible Interactions  
+
+* Imports `uuid` and `bcrypt`; relies on the external **bcrypt** library already present in the environment.  
+* Exposes three pure functions; callers receive only the return values—no side effects, no logging, no DB sessions.
+
+### Technical Logic Flow  
+
+1. **`get_rand_hash(length=32)`**  
+   1.1 Call `uuid.uuid4()` → generate a UUID‑4 object.  
+   1.2 Access `.hex` → 32‑character hexadecimal string.  
+   1.3 Slice to `length` (default 32) → `rnd_hash`.  
+   1.4 Return `rnd_hash`.  
+
+2. **`hash_password(password)`**  
+   2.1 Generate a fresh salt via `bcrypt.gensalt()`.  
+   2.2 Encode `password` to UTF‑8 bytes.  
+   2.3 Compute bcrypt hash with `bcrypt.hashpw`.  
+   2.4 Decode resulting bytes back to UTF‑8 string.  
+   2.5 Return the hash string.  
+
+3. **`verify_password(plain_password, hashed_password)`**  
+   3.1 Encode both arguments to UTF‑8 bytes.  
+   3.2 Call `bcrypt.checkpw`; bcrypt internally extracts the salt from `hashed_password`.  
+   3.3 Return the boolean outcome.  
+
+These utilities constitute the low‑level security primitive for the **FilmList** authentication pipeline. 
