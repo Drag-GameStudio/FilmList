@@ -37,7 +37,7 @@ ignore_files:
   - "*.pdb"
   - "*.md"
 
-  - "app/alembic"
+  - "app/alembic/*"
 
 build_settings:
   save_logs: false 

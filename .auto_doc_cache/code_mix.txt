@@ -1,0 +1,1277 @@
+Repository Structure:
+.github/
+  workflows/
+    autodoc.yml
+agd_report.txt
+app/
+  __init__.py
+  alembic/
+  alembic.ini
+  api/
+    v1/
+      endpoints/
+        auth.py
+        film.py
+        review.py
+      routes.py
+  core/
+    config.py
+    dependencies.py
+  db/
+    database.py
+  main.py
+  models/
+    film.py
+    user.py
+  repositories/
+    base_repository.py
+    film_repository.py
+    review_repository.py
+    user_repository.py
+    wish_list_repository.py
+  schema/
+    auth_schema.py
+    film_review.py
+    film_schema.py
+    wish_list_schema.py
+  services/
+    auth_service.py
+    film_service.py
+    review_service.py
+    wish_list_service.py
+  side_api/
+    tmdb_api.py
+  util/
+    hash.py
+autodocconfig.yml
+
+====================
+
+<file path=".github\workflows\autodoc.yml">
+name: AutoDoc
+on: [workflow_dispatch]
+jobs:
+  run:
+    permissions:
+      contents: write
+    uses: Drag-GameStudio/ADG/.github/workflows/reuseble_agd.yml@main
+    secrets:
+      GROCK_API_KEY: ${{ secrets.GROCK_API_KEY }}
+
+</file>
+
+<file path="agd_report.txt">
+
+</file>
+
+<file path="app\__init__.py">
+
+</file>
+
+<file path="app\alembic.ini">
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts.
+# this is typically a path given in POSIX (e.g. forward slashes)
+# format, relative to the token %(here)s which refers to the location of this
+# ini file
+script_location = %(here)s/alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.  for multiple paths, the path separator
+# is defined by "path_separator" below.
+prepend_sys_path = .
+
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the python>=3.9 or backports.zoneinfo library and tzdata library.
+# Any required deps can installed by adding `alembic[tz]` to the pip requirements
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to <script_location>/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "path_separator"
+# below.
+# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
+
+# path_separator; This indicates what character is used to split lists of file
+# paths, including version_locations and prepend_sys_path within configparser
+# files such as alembic.ini.
+# The default rendered in new alembic.ini files is "os", which uses os.pathsep
+# to provide os-dependent path splitting.
+#
+# Note that in order to support legacy alembic.ini files, this default does NOT
+# take place if path_separator is not present in alembic.ini.  If this
+# option is omitted entirely, fallback logic is as follows:
+#
+# 1. Parsing of the version_locations option falls back to using the legacy
+#    "version_path_separator" key, which if absent then falls back to the legacy
+#    behavior of splitting on spaces and/or commas.
+# 2. Parsing of the prepend_sys_path option falls back to the legacy
+#    behavior of splitting on spaces, commas, or colons.
+#
+# Valid values for path_separator are:
+#
+# path_separator = :
+# path_separator = ;
+# path_separator = space
+# path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+# database URL.  This is consumed by the user-maintained env.py script only.
+# other means of configuring database URLs may be customized within the env.py
+# file.
+
+sqlalchemy.url = sqlite:///test.db
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
+# hooks = ruff
+# ruff.type = module
+# ruff.module = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Alternatively, use the exec runner to execute a binary found on your PATH
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration.  This is also consumed by the user-maintained
+# env.py script only.
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+</file>
+
+<file path="app\api\v1\endpoints\auth.py">
+# regist, login, check login
+from fastapi import APIRouter, Depends, Response
+from app.schema.auth_schema import UserInfo, SessionSearchingParams
+from app.db.database import get_db, SessionLocal
+
+from app.services import auth_service
+from app.repositories.user_repository import UserRepository
+from app.core.dependencies import verify_user
+
+router = APIRouter(
+    prefix="/auth",
+    tags=["auth"],
+)
+
+
+@router.post("/regist")
+def regist(user_info: UserInfo):
+    auth_service_object = auth_service.AuthService(UserRepository(SessionLocal))
+    status, created_object =  auth_service_object.regist(user_info)
+    if status:
+        return {"status": "success", "message": created_object}
+    
+    return {"status": "error", "message": "this username has already taken"}
+
+
+
+@router.post("/login")
+def login(response: Response, user_params: UserInfo):
+    auth_service_object = auth_service.AuthService(UserRepository(SessionLocal))
+    status, detail = auth_service_object.login(user_params)
+
+    if status:
+        response.set_cookie(
+            key="custom_session_id",
+            value=detail,
+            max_age=3600 * 24 * 30,
+            httponly=False,
+        )
+        return {"status": "success"}
+    
+    return {"status": "error", "message": detail}
+
+@router.get("/check_auth")
+def check_auth(verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        return {"status": "success"}
+    return {"status": "error", "message": message}
+
+@router.post("/logout")
+def logout(verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+
+    if verify_data["status"]:
+        auth_service_object = auth_service.AuthService(UserRepository(SessionLocal))
+        status = auth_service_object.logout(SessionSearchingParams(id=verify_data["session_id"]))
+
+        if status == True:
+            return {"status": "success"}
+        
+        message = "problem with logout"
+
+    return {"status": "error", "message": message}
+    
+
+
+
+
+
+</file>
+
+<file path="app\api\v1\endpoints\film.py">
+from fastapi import APIRouter, Depends
+from app.db.database import SessionLocal
+from app.services import film_service, wish_list_service
+from app.repositories.film_repository import FilmRepository
+from app.repositories.wish_list_repository import WishListRepository
+from app.core.dependencies import verify_user
+from app.schema.film_schema import FilmSerchingParams
+from app.schema.wish_list_schema import AddToWishList, WishListCreator
+
+
+router = APIRouter(
+    prefix="/film",
+    tags=["film"]
+)
+
+
+@router.get("/search_film")
+def search_film(query: str, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        film_service_object = film_service.FilmService(FilmRepository(SessionLocal))
+        films = film_service_object.find_film_by_name(q=query)
+        return{"status": "success", "result": films}
+    
+    return {"status": "error", "message": message}
+
+@router.post("/wish_list/{film_id}")
+def add_film_to_wish_list(film_id: int, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        wish_list_service_object = wish_list_service.WishListService(WishListRepository(SessionLocal))
+        status, wish_list = wish_list_service_object.add_film_to_wish_list(AddToWishList(user_id=verify_data["user_id"], film_id=film_id))
+
+        if status:
+            return {"status": "success", "result": wish_list}
+        
+        message = "This film id is non-existent"
+
+    return {"status": "error", "message": message}
+
+@router.delete("/wish_list/{film_id}")
+def del_film_from_wish_list(film_id: int, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        wish_list_service_object = wish_list_service.WishListService(WishListRepository(SessionLocal))
+        status, wish_list = wish_list_service_object.remove_film_from_wish_list(AddToWishList(user_id=verify_data["user_id"], film_id=film_id))
+
+        if status:
+            return {"status": "success"}
+        
+        message = "This film hasnt been existed"
+        
+    return {"status": "error", "message": message}
+
+@router.get("/wish_list")
+def get_wish_list(verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        wish_list_service_object = wish_list_service.WishListService(WishListRepository(SessionLocal))
+
+        status, wish_list = wish_list_service_object.get_wish_list(WishListCreator(user_id=verify_data["user_id"]))
+        if status:
+            wish_list.reverse()
+            return {"status": "success", "result": wish_list}
+        
+        message = "Something happend"
+
+    return {"status": "error", "message": message}
+
+
+@router.get("/{film_id}")
+def get_info_about_film(film_id: int, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+    if verify_data["status"]:
+        film_service_object = film_service.FilmService(FilmRepository(SessionLocal))
+        status, film_object = film_service_object.get_info_about_film(FilmSerchingParams(id=film_id))
+        if status:
+            return {"status": "success", "result": film_object}
+        
+        message = "This film id is non-existent"
+
+    return {"status": "error", "message": message}
+
+
+</file>
+
+<file path="app\api\v1\endpoints\review.py">
+from fastapi import APIRouter, Depends
+from app.core.dependencies import verify_user
+from app.services.review_service import ReviewService, FilmReviewRepository
+from app.schema.film_review import Review, ReviewForAdd, ReviewSearchingParams
+from app.db.database import SessionLocal
+
+
+router = APIRouter(
+    prefix="/review",
+    tags=["review"]
+)
+
+
+
+@router.post("/{film_id}")
+def add_review(review_info: ReviewForAdd, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+
+
+    if verify_data["status"]:
+        review_service_object = ReviewService(FilmReviewRepository(SessionLocal))
+        status, review_object = review_service_object.add_review(Review(
+            film_id=review_info.film_id,
+            user_id=verify_data["user_id"],
+            content=review_info.content,
+            rate=review_info.rate
+            ))
+
+        if status:
+            return {"status": "success", "result": review_object}
+
+        return {"status": "error", "message": message}
+
+
+@router.get("/")
+def get_reviews(filters: ReviewSearchingParams = Depends(), verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+
+    if verify_data["status"]:
+        review_service_object = ReviewService(FilmReviewRepository(SessionLocal))
+        reviews = review_service_object.get_reviews(filters)
+
+        return {"status": "success", "result":  reviews}
+
+    return {"status": "error", "message": message}
+
+
+
+@router.get("/my")
+def get_my_reviews(verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+
+    if verify_data["status"]:
+        review_service_object = ReviewService(FilmReviewRepository(SessionLocal))
+        reviews = review_service_object.get_reviews(ReviewSearchingParams(user_id=verify_data["user_id"]))
+
+        return {"status": "success", "results":  reviews}
+
+    return {"status": "error", "message": message}
+
+
+
+@router.delete("/{review_id}")
+def delete_review(review_id: int, verify_data = Depends(verify_user)):
+    message = verify_data["message"]
+
+    if verify_data["status"]:
+        review_service_object = ReviewService(FilmReviewRepository(SessionLocal))
+        status = review_service_object.delete_review(ReviewSearchingParams(review_id=review_id, user_id=verify_data["user_id"]))
+        if status:
+            return {"status": "success"}
+        
+    return {"status": "error", "message": message}
+
+</file>
+
+<file path="app\api\v1\routes.py">
+from fastapi import APIRouter
+from .endpoints import auth, film, review
+
+
+routers = APIRouter(prefix="/v1")
+router_list = [auth.router, film.router, review.router]
+
+for router in router_list:
+    router.tags = router.tags.append("v1")
+    routers.include_router(router)
+</file>
+
+<file path="app\core\config.py">
+from dotenv import load_dotenv
+import os
+from pydantic_settings import BaseSettings
+
+
+
+class Settings(BaseSettings):
+    DB_URL: str = "sqlite:///./test.db"
+    TMDB_API_KEY: str = ""
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()
+</file>
+
+<file path="app\core\dependencies.py">
+from fastapi import APIRouter, Depends, Response, Cookie
+from app.schema.auth_schema import UserInfo, UserSearchingParams, SessionSearchingParams
+from app.db.database import get_db, SessionLocal
+
+from app.services import auth_service
+from app.repositories.user_repository import UserRepository
+
+
+def verify_user(custom_session_id: str = Cookie(None)):
+    session_id = custom_session_id
+    auth_service_object = auth_service.AuthService(UserRepository(SessionLocal))
+    if session_id is None:
+        status = False
+        user_id=None
+        session_id=None
+    else:
+        status, user_id = auth_service_object.check_auth(SessionSearchingParams(id=session_id))
+
+
+    return {"status": status, "user_id": user_id, "session_id": session_id, "message": "you are not authorizate"}
+
+</file>
+
+<file path="app\db\database.py">
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+try:
+    from app.core.config import settings
+
+except:
+    from core.config import settings
+
+
+SQLALCHEMY_DATABASE_URL = settings.DB_URL
+
+
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+
+</file>
+
+<file path="app\main.py">
+from fastapi import FastAPI
+from app.api.v1.routes import routers as v1_api_router
+from app.db.database import Base, engine
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
+
+app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # твой фронтенд
+    allow_credentials=True,                   # обязательно!
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+Base.metadata.create_all(bind=engine)
+
+app.include_router(v1_api_router)
+
+</file>
+
+<file path="app\models\film.py">
+from sqlalchemy import Table, Column, Integer, String, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
+from app.db.database import Base
+
+wish_list_films = Table(
+    "wish_list_films",
+    Base.metadata,
+    Column("wish_list_id", ForeignKey("wish_list.user_id"), primary_key=True),
+    Column("film_id", ForeignKey("films.id"), primary_key=True),
+)
+
+
+class Film(Base):
+    __tablename__ = "films"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    image = Column(String)
+
+
+class WishList(Base):
+    __tablename__ = "wish_list"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    user = relationship("User", back_populates="wish_list")
+    films = relationship("Film", secondary=wish_list_films)
+
+    def get_films(self):
+        return list(map(lambda obj: obj.id, list(self.films)))
+
+
+class FilmReview(Base):
+    __tablename__ = "films_reviews"
+
+    review_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    user = relationship("User")
+
+    film_id = Column(Integer, ForeignKey("films.id"))
+    film = relationship("Film")
+
+    content = Column(String)
+
+    rate = Column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'film_id', name='uq_user_film_review'),
+    )
+</file>
+
+<file path="app\models\user.py">
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
+from app.db.database import Base
+from app.util.hash import get_rand_hash
+from app.util.hash import verify_password, hash_password
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(length=256), unique=True, index=True)
+    _password = Column(String(length=300))
+
+    wish_list = relationship("WishList", uselist=False, back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def password(self):
+        return self._password
+
+    @password.setter
+    def password(self, value: str):
+        self._password = hash_password(value)
+
+    def check_password(self, password: str) -> bool:
+        return verify_password(password, self._password)
+    
+    
+
+
+
+class Session(Base):
+    __tablename__ = "session"
+
+    id = Column(String(length=32), primary_key=True, index=True, default=get_rand_hash)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    user = relationship("User")   
+
+    def __repr__(self):
+        return self.id
+    
+
+
+
+</file>
+
+<file path="app\repositories\base_repository.py">
+from sqlalchemy.orm import Session, joinedload
+from pydantic import BaseModel
+
+
+class BaseRepository:
+    def __init__(self, session_factory, model):
+        self.session_factory = session_factory
+        self.model = model
+        self.curr_session = None
+
+    def get_session(self):
+        if self.curr_session is None:
+            self.curr_session = self.session_factory()
+        
+        return self.curr_session
+    
+    def read_by_options(self, schema: BaseModel, eager: bool = False) -> dict:
+        session: Session = self.get_session()
+
+        schema_dict = schema.model_dump()
+        filled_schema_dict = [(key, schema_dict[key]) for key in schema_dict if schema_dict[key] is not None]
+        
+        query = session.query(self.model)
+        for param in filled_schema_dict:
+            query = query.filter(getattr(self.model, param[0]) == param[1])
+
+        return {"all": query.all(), "query": query}
+        
+    def create(self, schema: BaseModel):
+        session: Session = self.get_session()
+        query = self.model(**schema.model_dump())
+        try:
+            session.add(query)
+            session.commit()
+            session.refresh(query)
+        except Exception as e:
+            session.rollback() 
+            return False, None
+        return True, query
+
+    def read_by_id(self, schema: BaseModel, eager: bool = False) -> any:
+        return self.read_by_options(schema, eager=eager).get("query").first()
+
+    def update_element_by_id(self, schema_id: BaseModel, change_schema: BaseModel) -> any:
+        curr_object = self.read_by_id(schema_id)
+        if curr_object is None:
+            return None
+        
+        schema_dict = change_schema.model_dump()
+        filled_schema_dict = [(key, schema_dict[key]) for key in schema_dict if schema_dict[key] is not None]
+
+        session: Session = self.get_session()
+        session: Session
+        for key in filled_schema_dict:
+            setattr(curr_object, key, filled_schema_dict[key])
+            session.commit()
+            session.refresh()
+
+        return curr_object
+    
+    def delete_object(self, schema: BaseModel):
+        
+        
+        session: Session = self.get_session()
+        curr_object = self.read_by_id(schema)
+        if curr_object is None:
+            return False
+
+        session.delete(curr_object)
+        session.commit()
+
+        return True
+    
+    def __del__(self):
+        if self.curr_session is not None:
+            self.curr_session.close()
+
+
+</file>
+
+<file path="app\repositories\film_repository.py">
+from app.repositories.base_repository import BaseRepository
+from app.models.film import Film
+
+
+class FilmRepository(BaseRepository):
+    def __init__(self, session_factory):
+        super().__init__(session_factory, Film)
+</file>
+
+<file path="app\repositories\review_repository.py">
+from app.repositories.base_repository import BaseRepository
+from app.models.film import FilmReview
+
+
+
+class FilmReviewRepository(BaseRepository):
+    def __init__(self, session_factory):
+        super().__init__(session_factory, FilmReview)
+</file>
+
+<file path="app\repositories\user_repository.py">
+from app.repositories.base_repository import BaseRepository
+from app.models.user import User, Session
+
+
+class UserRepository(BaseRepository):
+    def __init__(self, session_factory):
+        super().__init__(session_factory, User)
+
+class SessionRepository(BaseRepository):
+    def __init__(self, session_factory):
+        super().__init__(session_factory, Session)
+
+
+</file>
+
+<file path="app\repositories\wish_list_repository.py">
+from app.repositories.base_repository import BaseRepository, Session
+from app.models.film import WishList, Film
+
+
+class WishListRepository(BaseRepository):
+    def __init__(self, session_factory):
+        super().__init__(session_factory, WishList)
+
+    def update_element_films(self, schema_id, update_schema):
+        session: Session = self.get_session()
+        curr_object = self.read_by_id(schema_id)
+        if curr_object is None:
+            return None
+
+        filled_schema_dict = update_schema.model_dump()
+
+        for key, value in filled_schema_dict.items():
+            # Если это поле films — нужно превратить список ID в объекты Film
+            if key == "films":
+                value = session.query(Film).filter(Film.id.in_(value)).all()
+            setattr(curr_object, key, value)
+
+        try:
+            session.commit()
+            session.refresh(curr_object)
+        except Exception as e:
+            session.rollback()
+            return False, None
+
+        return True, curr_object
+</file>
+
+<file path="app\schema\auth_schema.py">
+from pydantic import BaseModel
+from app.models.user import User
+from typing import Any
+
+
+class UserInfo(BaseModel):
+    username: str
+    password: str
+
+class UserSearchingParams(BaseModel):
+    id: int | None = None
+    username: str | None = None
+
+
+class SessionInfo(BaseModel):
+    user_id: int
+
+
+class SessionSearchingParams(BaseModel):
+    id: str | None = None
+    user: int | None = None
+
+</file>
+
+<file path="app\schema\film_review.py">
+from pydantic import BaseModel
+
+
+class Review(BaseModel):
+    film_id: int
+    user_id: int
+    content: str
+    rate: int
+
+
+class ReviewSearchingParams(BaseModel):
+    review_id: int | None = None
+    film_id: int | None = None
+    user_id: int | None = None
+    content: str | None = None
+    rate: int | None = None
+
+class ReviewForAdd(BaseModel):
+    film_id: int
+    content: str
+    rate: int
+
+
+class FilmBase(BaseModel):
+    id: int
+    image: str
+    title: str
+
+
+class FilmBaseSearchingParams(BaseModel):
+    id: int | None = None
+    image: str | None = None
+    title: str | None = None
+</file>
+
+<file path="app\schema\film_schema.py">
+from pydantic import BaseModel
+
+
+class FilmInfo(BaseModel):
+    id: int
+    image: str
+    title: str
+
+class FilmSerchingParams(BaseModel):
+    id: int | None = None
+    image: str | None = None
+    title: str | None = None
+
+class FilmCreator(BaseModel):
+    id: int
+
+class WishListFilmAdd(BaseModel):
+    id: int
+    user_id: int
+
+
+
+</file>
+
+<file path="app\schema\wish_list_schema.py">
+from pydantic import BaseModel
+
+
+class WishListCreator(BaseModel):
+    user_id: int
+
+class AddToWishList(BaseModel):
+    user_id: int
+    film_id: int
+
+class UpdateWishList(BaseModel):
+    films: list[int]
+</file>
+
+<file path="app\services\auth_service.py">
+from app.repositories.user_repository import UserRepository, SessionRepository
+from app.schema.auth_schema import UserInfo, UserSearchingParams, SessionInfo, SessionSearchingParams
+from app.models.user import User, Session
+
+
+class AuthService():
+    def __init__(self, user_repository: UserRepository):
+        self.user_repository = user_repository
+        self.session_repository = SessionRepository(user_repository.session_factory)
+
+
+    def regist(self, user: UserInfo):
+        return self.user_repository.create(user)
+
+    def login(self, user: UserInfo):
+        curr_user: User = self.user_repository.read_by_id(UserSearchingParams(username=user.username))
+        if curr_user is None:
+            return False, "user hasnt been existed"
+        
+        password_check = curr_user.check_password(user.password)
+        if password_check == False:
+            return False, "incorrect password"
+        
+        status, created_session = self.session_repository.create(SessionInfo(user_id=curr_user.id))
+        
+        return status, created_session.id
+    
+    def logout(self, session_schema: SessionSearchingParams):
+        status = self.session_repository.delete_object(session_schema)
+        return status
+
+    def check_auth(self, session_schema: SessionSearchingParams):
+        curr_session: Session = self.session_repository.read_by_id(schema=session_schema)
+        if curr_session is None:
+            return False, None
+        
+        
+        return True, curr_session.user.id
+        
+
+        
+        
+
+</file>
+
+<file path="app\services\film_service.py">
+from app.repositories.film_repository import FilmRepository
+from app.side_api.tmdb_api import TMDB
+from app.schema.film_schema import FilmInfo, FilmCreator, FilmSerchingParams
+
+
+class FilmService:
+    def __init__(self, film_repository: FilmRepository):
+        self.film_repository = film_repository
+        self.tmdb = TMDB()
+
+    def find_film_by_name(self, q):
+        films: list[FilmInfo] = self.tmdb.find_the_films(q)
+        return films[:10]
+    
+
+    def auto_create_film(self, film_info: FilmSerchingParams):
+        status, film_object = self.get_film(film_info=film_info)
+        if status:
+            return True, film_object
+        
+        status, film_object = self.create_film(FilmCreator(id=film_info.id))
+
+        if status:
+            return True, film_object
+        
+        return False, None
+
+    def get_info_about_film(self, film_info: FilmSerchingParams):
+        status, film_object = self.auto_create_film(film_info)
+        if status:
+            return True, film_object
+        return False, None
+
+    def get_film(self, film_info: FilmSerchingParams):
+        curr_film = self.film_repository.read_by_id(film_info)
+        if curr_film is None:
+            return False, None
+        
+        return True, curr_film
+    
+    
+    def create_film(self, film_creator: FilmCreator):
+
+        info: FilmInfo = self.tmdb.find_film_by_id(film_creator.id)
+        if info is None:
+            return False, None
+
+        status, film_object = self.film_repository.create(info)
+
+        return status, film_object
+</file>
+
+<file path="app\services\review_service.py">
+from app.repositories.review_repository import FilmReviewRepository
+from app.schema.film_review import Review, FilmBaseSearchingParams, ReviewSearchingParams
+from app.services.film_service import FilmService, FilmRepository
+
+
+class ReviewService():
+    def __init__(self, film_review_repository: FilmReviewRepository):
+        self.film_review_repository = film_review_repository
+        self.film_service = FilmService(FilmRepository(film_review_repository.session_factory))
+
+    def add_review(self, review_info: Review):
+        status, film_object = self.film_service.get_info_about_film(FilmBaseSearchingParams(id=review_info.film_id))
+        if status == False:
+            return False, None
+        status, review_object = self.film_review_repository.create(review_info)
+
+        return status, review_object
+    
+    def get_reviews(self, review_info: ReviewSearchingParams): 
+        reviews_objects = self.film_review_repository.read_by_options(review_info).get("all")
+        return reviews_objects
+    
+    def delete_review(self, review_info: ReviewSearchingParams):
+        status = self.film_review_repository.delete_object(review_info)
+        return status
+
+
+
+</file>
+
+<file path="app\services\wish_list_service.py">
+from app.repositories.wish_list_repository import WishListRepository
+from app.schema.wish_list_schema import WishListCreator, AddToWishList, UpdateWishList
+from app.services.film_service import FilmRepository, FilmService
+from app.schema.film_schema import FilmSerchingParams
+
+class WishListService:
+    def __init__(self, wish_list_repository: WishListRepository):
+        self.wish_list_repository = wish_list_repository
+        self.film_service = FilmService(FilmRepository(self.wish_list_repository.session_factory))
+
+    def create_wish_list(self, wish_list_creator: WishListCreator):
+        status, wish_list_object = self.wish_list_repository.create(wish_list_creator)
+        return status, wish_list_object
+    
+    def auto_create_wish_list(self, wish_list_creator: WishListCreator):
+        status, wish_list_object = self.create_wish_list(wish_list_creator)
+        if status:
+            return True, wish_list_object
+        
+        wish_list_object = self.wish_list_repository.read_by_id(wish_list_creator)
+        if wish_list_object is None:
+            return False, None
+        
+        return True, wish_list_object
+    
+    def add_film_to_wish_list(self, add_info: AddToWishList):
+        status, film_object = self.film_service.auto_create_film(FilmSerchingParams(id=add_info.film_id))
+        if status == False:
+            return False, None
+        
+        status, wish_list_object = self.auto_create_wish_list(WishListCreator(user_id=add_info.user_id))
+        if status == False:
+            return False, None
+        
+
+        update_film_list: list[int] = wish_list_object.get_films()
+
+        update_film_list.append(film_object.id)
+
+        update_film_list = list(set(update_film_list))
+
+        wish_list_update = self.wish_list_repository.update_element_films(WishListCreator(user_id=add_info.user_id), UpdateWishList(films=update_film_list))
+
+        return True, wish_list_update
+        
+    def remove_film_from_wish_list(self, remove_info: AddToWishList):
+        status, wish_list_object = self.auto_create_wish_list(WishListCreator(user_id=remove_info.user_id))
+        if status == False:
+            return False, None
+        update_film_list: list[int] = wish_list_object.get_films()
+        update_film_list.remove(remove_info.film_id)
+        wish_list_update = self.wish_list_repository.update_element_films(WishListCreator(user_id=remove_info.user_id), UpdateWishList(films=update_film_list))
+
+        return True, wish_list_update
+    
+    def get_wish_list(self, wish_list_info: WishListCreator):
+        status, wish_list_object = self.auto_create_wish_list(WishListCreator(user_id=wish_list_info.user_id))
+        if status == False:
+            return False, None
+        
+        return True, wish_list_object.films
+
+        
+        
+
+
+</file>
+
+<file path="app\side_api\tmdb_api.py">
+import requests
+from app.schema.film_schema import FilmInfo
+from app.core.config import settings
+
+class Movie:
+    def __init__(self, data: dict):
+        self.data = data
+
+    @property
+    def title(self):
+        return self.data["original_title"]
+    
+    @property
+    def image(self):
+        return f"https://image.tmdb.org/t/p/w500{self.data["poster_path"]}"
+    
+    @property
+    def id(self):
+        return self.data["id"]
+
+    def __repr__(self):
+        return f"{self.title}: {self.id}, {self.image}"
+    
+    @property
+    def schema(self):
+        return FilmInfo(id=self.id, image=self.image, title=self.title)
+
+class TMDB:
+    def __init__(self, api_key: str = settings.TMDB_API_KEY):
+        self.api_key = api_key
+
+    def find_the_films(self, q: str):
+        url = f"https://api.themoviedb.org/3/search/movie"
+
+        headers = {
+            "accept": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        params = {
+            "query": q,
+            "language": "ru-RU"
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+
+        return [Movie(el).schema for el in data["results"]]
+
+
+    def find_film_by_id(self, film_id):
+
+        url = f"https://api.themoviedb.org/3/movie/{film_id}"
+
+
+        headers = {
+            "accept": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        params = {
+            "language": "ru-RU"
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+
+        try:
+            return Movie(data).schema
+        
+        except:
+            return None
+
+
+
+</file>
+
+<file path="app\util\hash.py">
+import uuid
+
+def get_rand_hash(length: int = 32) -> str:
+    rnd_hash = uuid.uuid4().hex[:length]
+    return rnd_hash
+
+import bcrypt
+
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()  # генерирует уникальную "соль"
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+</file>
+
+<file path="autodocconfig.yml">
+project_name: "FilmList"
+language: "en"
+
+ignore_files:
+  # Python bytecode and cache
+  - "*.pyc"
+  - "*.pyo"
+  - "*.pyd"
+  - "__pycache__"
+  - ".ruff_cache"
+  - ".mypy_cache"
+  - ".auto_doc_cache"
+  # Environments and IDE settings
+  - "venv"
+  - "env"
+  - ".venv"
+  - ".env"
+  - ".vscode"
+  - ".idea"
+  - "*.iml"
+  # Databases and binary data
+  - "*.sqlite3"
+  - "*.db"
+  - "*.pkl"
+  - "data"
+  # Logs and coverage reports
+  - "*.log"
+  - ".coverage"
+  - "htmlcov"
+  # Version control and assets
+  - ".git"
+  - ".gitignore"
+  - "migrations"
+  - "static"
+  - "staticfiles"
+  # Miscellaneous
+  - "*.pdb"
+  - "*.md"
+
+  - "app/alembic/*"
+
+build_settings:
+  save_logs: false 
+  log_level: 2
+
+custom_description:
+  - "describe how the search is working and describe side api of project"
+
+structure_settings:
+  include_intro_links: true
+  include_intro_text: true
+  include_order: true
+  
+  use_global_file: true
+  max_doc_part_size: 5000
+
+</file>
+
