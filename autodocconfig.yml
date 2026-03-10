@@ -37,12 +37,14 @@ ignore_files:
   - "*.pdb"
   - "*.md"
 
+  - "app/alembic"
+
 build_settings:
   save_logs: false 
   log_level: 2
 
 custom_description:
-  - "how does the search is working and describe side api of project"
+  - "describe how the search is working and describe side api of project"
 
 structure_settings:
   include_intro_links: true
